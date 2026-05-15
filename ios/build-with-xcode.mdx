@@ -86,22 +86,13 @@ await xcode.sync('./my-ios-app');
 ```
 </CodeGroup>
 
-The CLI's `lim xcode build` (step 3 below) runs `sync` for you, so a standalone `sync` is only needed when you want to push files without building. Sync options for the SDK:
-
-| Option | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `watch` | `boolean` | `true` | When `true`, returns `stopWatching` and re-syncs on changes. |
-| `basisCacheDir` | `string` | OS tmpdir, keyed by a hash of the resolved local path | Stores last-synced files for xdelta3 patches. |
-| `maxPatchBytes` | `number` | `4 * 1024 * 1024` (4 MiB) | If a delta exceeds this, the SDK falls back to a full upload. |
-| `install` | `boolean` | `true` | Whether to run the install hook after sync (relevant for the attached-simulator topology). |
-| `ignore` | `(relativePath: string) => boolean` | none | User predicate, layered on top of built-in ignores. Directory paths end with `/`. |
-| `additionalFiles` | `Array<{ localPath: string; remotePath: string }>` | none | Extra files synced every pass. `remotePath` may start with `~/`, which resolves to the sandbox home directory. |
+The CLI's `lim xcode build` (step 3 below) runs `sync` for you, so a standalone `sync` is only needed when you want to push files without building.
 
 The SDK always reads `.gitignore` at the sync root and applies it to the upload. It also hardcodes ignores for directories that should never reach a build host: `build/`, `.build/`, `DerivedData/`, `Index.noindex/`, `ModuleCache.noindex/`, `.index-build/`, `.swiftpm/`, `Pods/`, `Carthage/Build/`, anything under `xcuserdata/`, and any `.dSYM/` bundles. `.xcconfig` files are always kept, even if a `.gitignore` rule would drop them.
 
 If a `.gitignore` rule drops a tracked source file the SDK warns once per rule. That usually means the rule is too aggressive; scope it down or remove it.
 
-For files outside the project root such as `~/.netrc`:
+The one sync option most projects reach for is `additionalFiles`, for things outside the project root such as `~/.netrc`:
 
 ```ts
 await xcode.sync('./my-ios-app', {
@@ -112,6 +103,17 @@ await xcode.sync('./my-ios-app', {
 ```
 
 The CLI equivalent is `lim xcode sync . --additional-file ~/.netrc=~/.netrc`.
+
+<Accordion title="All sync options">
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `watch` | `boolean` | `true` | When `true`, returns `stopWatching` and re-syncs on changes. |
+| `basisCacheDir` | `string` | OS tmpdir, keyed by a hash of the resolved local path | Stores last-synced files for xdelta3 patches. |
+| `maxPatchBytes` | `number` | `4 * 1024 * 1024` (4 MiB) | If a delta exceeds this, the SDK falls back to a full upload. |
+| `install` | `boolean` | `true` | Whether to run the install hook after sync (relevant for the attached-simulator topology). |
+| `ignore` | `(relativePath: string) => boolean` | none | User predicate, layered on top of built-in ignores. Directory paths end with `/`. |
+| `additionalFiles` | `Array<{ localPath: string; remotePath: string }>` | none | Extra files synced every pass. `remotePath` may start with `~/`, which resolves to the sandbox home directory. |
+</Accordion>
 
 ## 3. Run xcodebuild
 
