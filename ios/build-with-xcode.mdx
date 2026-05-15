@@ -7,7 +7,8 @@ Limrun's Xcode instances replace your local `xcodebuild` with a hosted one. You 
 
 By the end of this guide you'll be running a remote `xcodebuild` against your synced source, watching the resulting app launch on a co-located simulator, and (optionally) shipping the signed artifact to Limrun Asset Storage or your own bucket.
 
-<Prompt description="Wire up a remote iOS Xcode dev loop with the Limrun SDK or CLI.">
+<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
+```text wrap
 You are helping a developer build an iOS, watchOS, or tvOS app on a remote Limrun Xcode environment instead of a local Mac.
 
 Read the docs in this order:
@@ -25,7 +26,8 @@ Then:
 5. Stream `proc.stdout` and `proc.stderr` from the returned `ExecChildProcess` so the user sees live build logs.
 
 Never call local `xcodebuild`. The CLI and the TypeScript SDK are the only supported drivers; the Go, Python, and Java SDKs cover instance CRUD only.
-</Prompt>
+```
+</Accordion>
 
 ## Prerequisites
 
