@@ -1,16 +1,28 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "luma",
-  "name": "lim",
-  "description": "Documentation for lim.",
+  "theme": "maple",
+  "name": "Limrun",
+  "description": "Run Xcode and iOS, Android, and Linux sandboxes in the cloud, controllable from any language or coding agent.",
   "colors": {
-    "primary": "#166E3F",
-    "light": "#26BD6C",
-    "dark": "#166E3F"
+    "primary": "#26BD6C",
+    "light": "#5BE093",
+    "dark": "#0F5E33"
   },
-  "favicon": "/favicon.ico",
+  "background": {
+    "decoration": "grid"
+  },
+  "favicon": "/favicon.svg",
   "icons": {
     "library": "lucide"
+  },
+  "fonts": {
+    "heading": {
+      "family": "Inter",
+      "weight": 600
+    },
+    "body": {
+      "family": "Inter"
+    }
   },
   "navigation": {
     "tabs": [
@@ -35,16 +47,39 @@
           }
         ]
       }
-    ]
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "icon": "github",
+          "href": "https://github.com/limrun-inc"
+        },
+        {
+          "anchor": "Console",
+          "icon": "layout-dashboard",
+          "href": "https://console.limrun.com"
+        }
+      ]
+    }
   },
   "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/limrun-inc"
+      }
+    ],
     "primary": {
       "type": "button",
-      "label": "Get started",
-      "href": "/quickstart"
+      "label": "Get an API key",
+      "href": "https://console.limrun.com"
     }
   },
   "footer": {
-    "socials": {}
+    "socials": {
+      "github": "https://github.com/limrun-inc",
+      "website": "https://lim.run"
+    }
   }
 }
