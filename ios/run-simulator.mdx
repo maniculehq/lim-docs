@@ -7,7 +7,8 @@ A Limrun iOS instance is a fully booted iPhone, iPad, or Watch simulator running
 
 By the end of this guide you'll be creating an iOS simulator, controlling it from your code, and tearing it down cleanly.
 
-<Prompt description="Drive a cloud iOS simulator end-to-end from a Limrun instance.">
+<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
+```text wrap
 You are helping a developer drive a Limrun cloud iOS simulator from code.
 
 Read the docs in this order:
@@ -24,7 +25,8 @@ The canonical TypeScript flow is:
 6. `client.disconnect()` and `await lim.iosInstances.delete(instance.metadata.id)` in `finally`.
 
 Never try to run a local iOS simulator or call local `xcodebuild`. On the instance itself, `xcodebuild` accepts only `-version` and `xcrun` accepts only `--sdk` / `--show-sdk-*-version`. For real builds, provision an Xcode sandbox via `spec.sandbox.xcode.enabled` or a standalone XcodeInstance (see /ios/build-with-xcode.md).
-</Prompt>
+```
+</Accordion>
 
 ## Prerequisites
 

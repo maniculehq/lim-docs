@@ -7,13 +7,14 @@ Limrun gives a cloud coding agent (Claude Code, Cursor, Codex) hands-on access t
 
 By the end of this guide your cloud coding agent will be building and running an iOS app on a Limrun simulator.
 
-<Prompt>
+<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
+```text wrap
 You are helping me wire a cloud coding agent (Claude Code, Cursor, or Codex) to Limrun so it can build and run an iOS app on a remote simulator.
 
 Follow the canonical Limrun integration: read the Quickstart at /quickstart.md and the iOS guides at /ios/build-with-xcode.md and /ios/run-simulator.md.
 
 Concrete steps for me:
-1. Install the CLI with `npm install --global @limrun/cli`. Confirm with `lim --version`.
+1. Install the CLI with `npm install --global @limrun/cli`. Confirm with `lim --help`.
 2. Authenticate. Either run `lim login` (opens a browser, writes the key to `~/.lim/config.yaml`) or save `LIM_API_KEY=lim_...` to a `.env` file in the project and confirm `.env` is in `.gitignore`.
 3. Install the Limrun skill into the agent's skills directory with `lim skills install`. Pick the right agent and scope when prompted. The bundled skill is named `limrun-ios`.
 4. Create a paired iOS instance and Xcode sandbox with `lim ios create --xcode --reuse-if-exists --label issue=<id> --label repo=<name> --label agent=<name>`. Print the `Signed Stream URL` from the output so I can open it in a browser.
@@ -21,7 +22,8 @@ Concrete steps for me:
 6. After the app launches, verify state with `lim ios element-tree` and drive the UI with `lim ios tap-element --ax-label "<label>"`. Tear down with `lim ios delete` when done.
 
 Never call local `xcodebuild`. Never spin up a local simulator. Use the `lim` CLI for every build and every device interaction.
-</Prompt>
+```
+</Accordion>
 
 ## Prerequisites
 

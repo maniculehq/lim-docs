@@ -7,7 +7,8 @@ Once you have a provisioned iOS instance (see step 1 of [Run an iOS Simulator](/
 
 By the end of this guide you'll know every device-control method on the iOS client and when to use which.
 
-<Prompt description="Drive a Limrun iOS simulator with the connected client.">
+<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
+```text wrap
 You are helping a developer control an iOS simulator on Limrun. Assume the user already has an `IosInstance` from /ios/run-simulator.md (step 1).
 
 Prefer this order when scripting an interaction:
@@ -20,7 +21,8 @@ Prefer this order when scripting an interaction:
 7. Drop to `client.simctl(args)` only when the typed surface doesn't cover what you need. `xcodebuild` is a stub (`-version` only) and `xcrun` is sharply allow-listed.
 
 Read /ios/control-instance.md for the full method reference.
-</Prompt>
+```
+</Accordion>
 
 ## Prerequisites
 
