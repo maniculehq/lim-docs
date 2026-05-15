@@ -43,17 +43,19 @@ Never call local `xcodebuild`. Never spin up a local simulator. Use the `lim` CL
   <Step title="Install the CLI">
     Install `@limrun/cli` globally so the `lim` binary is on your PATH. Your coding agent calls this from a shell.
 
-    <CodeGroup>
-      ```bash TypeScript
-      npm install --global @limrun/cli
-      ```
-    </CodeGroup>
+    ```bash
+    npm install --global @limrun/cli
+    ```
 
-    Confirm the install:
+    Confirm the install (the CLI prints its version at the top of the help output):
 
     ```bash
-    lim --version
+    lim --help
     ```
+
+    <Note>
+    The `limrun-inc/tap/lim` Homebrew formula is a separate, older Go binary with a partially different command surface. These docs are written against `@limrun/cli` — use the npm package above, not the brew tap.
+    </Note>
   </Step>
 
   <Step title="Authenticate">
@@ -95,7 +97,7 @@ Never call local `xcodebuild`. Never spin up a local simulator. Use the `lim` CL
   </Step>
 
   <Step title="Create an iOS instance with Xcode attached">
-    From inside the project the agent is working in, create a paired iOS simulator and Xcode sandbox. The `--xcode` flag is required for `lim xcode build` to work against the instance. Labels make the instance easy to find and let `--reuse-if-exists` snap back to the same one across agent runs.
+    From inside the project the agent is working in, create a paired iOS simulator and Xcode sandbox. The `--xcode` flag is what makes `lim xcode build` target this instance. Labels are how `--reuse-if-exists` finds the same instance again across agent runs, and how you filter listings later.
 
     ```bash
     lim ios create --xcode \
@@ -157,7 +159,7 @@ When the agent is done, it should clean up the instance:
 lim ios delete
 ```
 
-Without an ID argument, `lim ios delete` removes the last instance the CLI created in this directory.
+Without an ID argument, `lim ios delete` removes the last iOS instance the CLI created for your user. The pointer is stored in `~/.lim/last-instances.json` and is updated on every `lim ios create`.
 
 ## Where to go next
 

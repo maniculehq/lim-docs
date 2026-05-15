@@ -58,20 +58,23 @@ const instance = await lim.iosInstances.create({
   spec: { sandbox: { xcode: { enabled: true } } },
 });
 
+const xcodeUrl = instance.status.sandbox?.xcode?.url;
+if (!xcodeUrl) throw new Error('Xcode sandbox URL is missing');
+
 const xcode = await lim.xcodeInstances.createClient({
-  apiUrl: instance.status.sandbox.xcode.url,
+  apiUrl: xcodeUrl,
   token: instance.status.token,
 });
 ```
 </CodeGroup>
 
-`reuseIfExists` (CLI: `--reuse-if-exists`) is the killer flag: a re-run with the same label set returns the existing instance instead of provisioning a new one, so your basis cache and warm Xcode stay hot across iterations. The created instance prints a `signedStreamUrl` you can open in a browser to watch the bundled simulator live.
+`reuseIfExists` (CLI: `--reuse-if-exists`) is the flag that keeps the loop fast: a re-run with the same label set returns the existing instance instead of provisioning a new one, so the sync cache stays primed (see [Sync your source](#2-sync-your-source)) and the Xcode pod stays warm across iterations. The created instance prints a `signedStreamUrl` you can open in a browser to watch the bundled simulator live.
 
 For the standalone topology (artifact-only, no simulator), see [Optional: Build without a simulator](#optional-build-without-a-simulator) at the bottom.
 
 ## 2. Sync your source
 
-The first sync uploads the full project and warms a basis cache. Subsequent syncs send xdelta3 patches and complete in well under a second for typical edits.
+The CLI and SDK both ship a sync layer in front of `xcodebuild`: the first sync uploads the full project, then stores a copy on disk (the **basis cache**) so later syncs can diff against it. Every subsequent sync sends only the changed bytes as an [xdelta3](https://github.com/jmacd/xdelta) binary patch, which is orders of magnitude smaller than the full project.
 
 <CodeGroup>
 ```bash lim CLI
@@ -136,7 +139,7 @@ const result = await build;
 | `scheme` | `string` | e.g. `MyApp`. |
 | `sdk` | `'iphonesimulator' \| 'iphoneos' \| 'watchsimulator' \| 'watchos'` | SDK to target. |
 
-If you pass no settings, the server picks defaults from the synced project. Single-scheme SwiftUI projects usually just work. Multi-scheme projects need at least `scheme`.
+If you pass no settings, the server picks defaults from the synced project. Single-scheme SwiftUI projects build with no flags. Multi-scheme projects need at least `scheme`. For an `.xcworkspace` with workspace-level schemes, pass both `workspace` and `scheme`.
 
 CLI flags map one-to-one onto these fields:
 

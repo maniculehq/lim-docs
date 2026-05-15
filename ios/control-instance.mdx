@@ -275,7 +275,7 @@ await client.toggleKeyboard();                        // equivalent to ⌘K
 ```bash lim CLI
 lim ios type "hello world"
 lim ios press-key enter
-lim ios press-key s --modifiers command
+lim ios press-key s --modifier command
 lim ios toggle-keyboard
 ```
 </CodeGroup>
@@ -400,7 +400,7 @@ stream.stop();
 ```
 
 ```bash lim CLI
-lim ios app-log com.example.myapp --lines 200
+lim ios app-log com.example.myapp --tail 200
 lim ios syslog
 ```
 </CodeGroup>

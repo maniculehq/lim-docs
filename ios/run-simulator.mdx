@@ -133,7 +133,11 @@ URLs are scoped to instance lifetime. Once the instance terminates, recording do
 
 ## 2. Connect a device-control client
 
-The control client lives at `Ios.createInstanceClient` (not on the `iosInstances` resource). It opens a signaling WebSocket, fetches `deviceInfo`, and resolves to a typed handle with every device-driving method on it.
+The control client lives at `Ios.createInstanceClient` (not on the `iosInstances` resource). It opens a WebSocket to the instance (the *signaling channel*; it's the duplex transport for every method below), fetches `deviceInfo`, and resolves to a typed handle with every device-driving method on it.
+
+<Note>
+The iOS client is a namespace function (`Ios.createInstanceClient`) while the Xcode client is an instance method (`lim.xcodeInstances.createClient`). The asymmetry is intentional but easy to trip on: when you try `lim.iosInstances.createClient(...)` it'll be `undefined`. See [Build with Remote Xcode](/ios/build-with-xcode) for the Xcode variant.
+</Note>
 
 ```ts TypeScript
 import { Ios, Limrun } from '@limrun/api';
