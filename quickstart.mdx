@@ -30,9 +30,13 @@ Never call local `xcodebuild`. Never spin up a local simulator. Use the `lim` CL
   ```bash .env
   LIM_API_KEY=lim_...
   ```
-- **The `lim` CLI.** Install [`@limrun/cli`](https://www.npmjs.com/package/@limrun/cli) from npm. Requires Node.js 20 LTS or newer.
+- **The `lim` CLI.** Install [`@limrun/cli`](https://www.npmjs.com/package/@limrun/cli). Requires Node.js 20 LTS or newer (or Bun).
   ```bash
-  npm install --global @limrun/cli
+  # Pick your package manager
+  npm  install --global @limrun/cli
+  pnpm add     --global @limrun/cli
+  bun  add     --global @limrun/cli
+
   lim --help   # should list topics: ios, android, xcode, asset, session, skills
   ```
 

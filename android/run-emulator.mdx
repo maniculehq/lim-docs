@@ -3,11 +3,20 @@ title: "Run an Android Emulator"
 description: "Drive a remote Android emulator via ADB tunnel, the SDK control plane, or existing Android tooling, from any Linux, macOS, or Windows host."
 ---
 
-A Limrun Android instance is a fully-booted Android emulator exposed two ways. The SDK exposes a narrow device-control surface (taps, screenshots, element-tree, recording) for the things that benefit from a typed API. The more important door, though, is an **ADB tunnel** that turns the remote emulator into a local-looking device for every Android tool you already use. Android Studio, `adb`, `scrcpy`, Appium, and Detox all auto-detect the device once the tunnel is up.
+A Limrun Android instance is a fully-booted Android emulator. You drive it two ways:
 
-The SDK surface is intentionally narrow because the tunnel carries the rest of the ecosystem.
+- **ADB tunnel** (the main door). Forwards a local TCP port to the remote emulator's ADB endpoint. Once it's up, Android Studio, `adb`, `scrcpy`, Appium, and Detox all auto-detect the device.
+- **Narrow SDK surface** for the things that benefit from a typed API: taps, screenshots, element-tree, recording. Everything else goes through the tunnel.
 
-The Android **device-control client** (`createInstanceClient` with taps, element-tree, etc.) ships in the **TypeScript SDK only** today. The **ADB tunnel** ships in TypeScript and Go (the Go package is `github.com/limrun-inc/go-sdk/tunnel`). Python and Java users authenticate with the SDK to provision instances, then drive everything else through the tunnel using ordinary `adb` commands. See [SDK capability matrix](/reference#sdk-capability-matrix).
+**SDK coverage by language:**
+
+| Surface | TypeScript | Python | Go | Java |
+|---|---|---|---|---|
+| Instance provisioning (CRUD) | ✓ | ✓ | ✓ | ✓ |
+| ADB tunnel | ✓ (`startAdbTunnel`) | not in SDK | ✓ (`tunnel.NewADB`, `Multiplexed`) | not in SDK |
+| Device control (taps, element-tree, etc.) | ✓ | not in SDK | not in SDK | not in SDK |
+
+Python and Java users provision via SDK, then drive everything else through the tunnel using ordinary `adb`. See [SDK capability matrix](/reference#sdk-capability-matrix).
 
 The console's Playground is the no-code way to spin one up. Pick an OS version (14 or 15), optionally pick an APK to preinstall, hit **Start**:
 

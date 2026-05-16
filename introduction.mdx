@@ -44,10 +44,25 @@ The iOS and Xcode resources compose: an iOS instance can be created with `spec.s
 
 ## How it fits together
 
-The CLI, SDKs, MCP, and `<RemoteControl />` are all clients of the same REST API at `https://api.limrun.com`. Your org API key (prefixed `lim_`, via `LIM_API_KEY`) authenticates the control plane and the per-instance MCP server. Each instance also returns a per-instance `status.token` for device control (`apiUrl`, `endpointWebSocketUrl`, ADB tunnel, and `<RemoteControl />`). You can mix and match: create an instance from a Node backend, stream it to a React frontend, and control it from a Python notebook on the side.
+The CLI, the four SDKs, the per-instance MCP server, and `<RemoteControl />` all talk to the same REST API at `https://api.limrun.com`.
+
+**Two credentials show up across the surface:**
+
+| Credential | Where it comes from | What it authenticates |
+|---|---|---|
+| **Org API key** | `LIM_API_KEY` env var (prefix `lim_…`) | Control plane (`api.limrun.com`) and the per-instance MCP server |
+| **Per-instance token** | `instance.status.token`, returned by `create` | Device control: `apiUrl`, `endpointWebSocketUrl`, ADB tunnel, `<RemoteControl />`, Xcode sandbox URL |
 
 <Frame>
   <img src="/images/diagrams/architecture.png" alt="Two-stage architecture diagram. Control plane: api.limrun.com authenticated with an org API key, accepting POST /v1/ios_instances, POST /v1/android_instances, POST /v1/xcode_instances, and PUT /v1/assets. Each instance returns status URLs plus a per-instance token. Per-instance data plane: apiUrl drives SDK/CLI device control; endpointWebSocketUrl streams to RemoteControl; signedStreamUrl is the browser watch URL with token embedded; adbWebSocketUrl is the Android ADB tunnel; mcpUrl is the per-instance MCP server authenticated with the org API key; sandbox.xcode.url is xcodebuild over SSE." />
 </Frame>
 
-Every client in our ecosystem (the `lim` CLI, the TypeScript / Python / Go / Java SDKs, the per-instance MCP server, `<RemoteControl />` from `@limrun/ui`, and `@limrun/appium-xcuitest-driver`) connects through one or more of those URLs. See [SDK reference](/reference#credentials) for the full auth matrix.
+**Mix-and-match is the point.** Create an instance from a Node backend, stream it to a React frontend with `<RemoteControl />`, and drive it from a Python notebook on the side. Every client in the ecosystem connects through one or more of the URLs above:
+
+- **`lim` CLI** (`@limrun/cli`)
+- **SDKs** for TypeScript, Python, Go, Java
+- **Per-instance MCP server** (Claude Code, Cursor, custom MCP clients)
+- **`<RemoteControl />`** from `@limrun/ui`
+- **`@limrun/appium-xcuitest-driver`** for Appium-based iOS testing
+
+See [SDK reference](/reference#credentials) for the full auth matrix.

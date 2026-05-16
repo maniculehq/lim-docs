@@ -3,9 +3,13 @@ title: "MCP for controlling instances"
 description: "Wire a coding agent directly to a Limrun instance over MCP: no CLI, no shared endpoint, one server per instance."
 ---
 
-Every iOS and Android instance Limrun creates exposes a Model Context Protocol (MCP) server at a per-instance URL. The MCP surface mirrors the device-control surface of the SDK: screenshots, taps, element-tree, text input, app launch/terminate, scrolling, deep links, recording. Each instance has its own MCP URL (there is no shared "Limrun MCP endpoint" you connect to once). Authenticate with your org API key in an `Authorization: Bearer` header, not with `instance.status.token`.
+Every iOS and Android instance Limrun creates exposes its own Model Context Protocol (MCP) server. Three things to know up front:
 
-This page covers when to use the hosted per-instance MCP server, how to grab the URL, and how to wire it into Claude Desktop, Cursor, Codex, and custom MCP clients.
+- **Per-instance, not shared.** There is no single "Limrun MCP endpoint." Each instance has its own URL in `instance.status.mcpUrl`.
+- **Auth uses the org API key**, not `instance.status.token`. Pass it as `Authorization: Bearer lim_…`.
+- **The tool surface mirrors the SDK's device-control plane**: screenshots, taps, element-tree, text input, app launch/terminate, scrolling, deep links, recording.
+
+This page covers when to reach for MCP, how to grab the URL, and how to wire it into Claude Code, Claude Desktop, Cursor, Codex, and custom MCP clients.
 
 ## CLI vs MCP
 
@@ -17,7 +21,7 @@ This page covers when to use the hosted per-instance MCP server, how to grab the
 | **Tool surface** | Every `lim ios *` / `lim xcode *` / `lim asset *` / `lim android *` subcommand | Device-control subset only (no `xcode build`, no `lim asset push`) |
 | **Best for** | Builds, instance lifecycle, anything CLI-shaped | Tight tap/screenshot loops where round-trip latency matters |
 
-The CLI is the full surface: it can create instances, run `xcode build`, manage assets, and so on. MCP is purely the device-control plane, scoped to a single instance, exposed as MCP tools so an agent with tool-use can call them directly without shelling out. Most agent workflows use both: the CLI to provision and build, MCP for the inner taps/screenshots/element-tree loop.
+**Rule of thumb:** use both. The CLI handles provisioning, builds, and asset management. MCP handles the tight tap-screenshot-elementTree loop, exposed as MCP tools so an agent with native tool-use can call them without shelling out.
 
 ## Get the `mcpUrl`
 

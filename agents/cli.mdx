@@ -30,10 +30,13 @@ For MCP-based device control (an alternative to shelling out), see /agents/mcp.m
 ## Install the CLI
 
 ```bash
-npm install --global @limrun/cli
+# Pick your package manager
+npm  install --global @limrun/cli
+pnpm add     --global @limrun/cli
+bun  add     --global @limrun/cli
 ```
 
-Confirm with `lim --help`. You should see topics `ios`, `android`, `xcode`, `asset`, `session`, and `skills`. Requires Node.js 20 LTS or newer.
+Confirm with `lim --help`. You should see topics `ios`, `android`, `xcode`, `asset`, `session`, and `skills`. Requires Node.js 20 LTS or newer (or Bun).
 
 ## Authenticate
 
