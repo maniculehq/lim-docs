@@ -1,68 +1,73 @@
 ---
 title: "Introduction"
-description: "Run iOS simulators, Android emulators, and Xcode builds in the cloud, controllable from any language, CLI, or coding agent."
+description: "Limrun is cloud infrastructure for mobile development. Run iOS simulators, Android emulators, and Xcode builds in the cloud, controlled through one CLI or SDK."
 ---
 
-Limrun gives you remote, programmable access to the mobile development hardware that lives on a Mac: iOS simulators, an attached Xcode build sandbox, and Android emulators. Every instance is reachable over the REST control plane (`api.limrun.com`), per-instance HTTP and WebSocket endpoints, an ADB tunnel (Android), a per-instance MCP server, or the `lim` CLI. That means any host can drive it, including Linux CI runners and cloud coding agents that have no access to a Mac.
+Mobile development is bound to platform-specific hardware: macOS for iOS, accelerated emulators for Android, physical devices for testing. Limrun runs that hardware as on-demand cloud services, so any process can build iOS apps without a Mac, test on simulators from a CI runner, embed a live simulator in a web app, or share a preview URL reviewers open in any browser.
 
-## What you can build
+## Three products
 
-- **Cloud coding agents that ship iOS code.** Wire your agent's terminal to the `lim` CLI. The agent runs `lim ios create --xcode`, calls `lim xcode build .`, drives the simulator with `lim ios tap-element` / `lim ios screenshot`, and posts a preview link back to the PR. No `xcodebuild` on the agent's host, no macOS runner.
-- **Embedded simulators in your product.** Render a live iOS or Android simulator inside your web app using `<RemoteControl />` from `@limrun/ui`. The browser streams over WebRTC; your server holds the API key. Used by platform integrators like coding-agent providers to give their users a real device on the page.
-- **Mobile CI from a Linux box.** Run `xcodebuild`, Appium, Playwright Android, or Detox against a Limrun instance from any GitHub Actions runner. No macOS minutes, no `runs-on: macos-latest`.
-- **No-Mac iOS development.** Build, run, and test iOS apps from a Windows laptop, a Chromebook, or a Linux desktop. Source code stays local; only the build runs remotely.
+Limrun is three composable cloud services:
 
-## The four resources
-
-Limrun exposes four top-level resources. Each one is independent: you can use the iOS simulator without an Xcode sandbox, or stand up a standalone Xcode builder with no simulator attached.
-
-| Resource | What it is | When you use it |
+| Product | What it is | What you do with it |
 |---|---|---|
-| **iOS instance** | A booted iOS Simulator (iPhone; iPad and Apple Watch in alpha), streamable, programmable, optionally with an Xcode build sandbox attached | Driving the UI, running an app, IAP testing, embedding in a web app |
-| **Xcode instance** | A standalone Xcode build sandbox: source-sync + remote `xcodebuild` with no simulator | CI builds, real-device IPAs for distribution, MCP-wrapped build tools |
-| **Android instance** | A booted Android emulator with an ADB tunnel | Anything ADB does locally, plus Appium, Playwright Android, scrcpy streaming |
-| **Asset** | A managed binary store for `.ipa`, `.app.tar.gz`, `.apk`, and configuration files | Pre-installing apps at boot, hosting build artifacts, sharing previews |
+| iOS simulator | A real Mac running the iOS Simulator | Stream it in a browser. Drive it programmatically: taps, screenshots, video, app launch, log streaming, element queries. |
+| Xcode build sandbox | A real Mac running `xcodebuild` | Sync your source, run `xcodebuild` remotely, get the logs back. |
+| Android emulator | A booted emulator with an ADB tunnel | Local Android Studio, Appium, and scrcpy attach as if it were a USB device. |
 
-The iOS and Xcode resources compose: an iOS instance can be created with `spec.sandbox.xcode.enabled` to get a paired Xcode sandbox in one call. The Xcode sandbox also runs as a top-level resource if you don't need a simulator at the same time.
+The iOS simulator and Xcode sandbox can be created as a paired instance in one call. A successful build auto-installs on the attached simulator, which is the most common shape.
 
-## Pick your starting point
+Limrun also offers **Asset Storage** for build artifacts: `.ipa`, `.apk`, and `.app.tar.gz` files. Upload once, then pre-install on new instances or share via preview URLs.
+
+## How it works
+
+Getting started is short:
+
+1. Install the CLI in your environment (or pull the SDK in your language).
+2. Authenticate by setting `LIM_API_KEY`.
+3. Create an instance: iOS, Android, or paired iOS + Xcode in one call.
+4. Use it. Build, drive the simulator, stream it, or attach to its ADB tunnel.
+5. Tear it down. Inactivity timeouts handle this for you if you forget.
+
+See the [Quickstart](/quickstart) for a three-minute walkthrough.
+
+## Common use cases
+
+**Shipping iOS or Android code from a cloud coding agent.** A coding agent picks up a ticket on its Linux VM, calls Limrun to build and run the app on a real Mac, drives the simulator to verify the change, and posts a preview link on the PR for reviewers.
+
+**Mobile builds and tests from Linux CI.** Run `xcodebuild` from a Linux runner, drive Appium tests against cloud simulators, post artifacts and preview links on every PR. No macOS minutes required.
+
+**Embedded simulators inside a product.** A backend creates instances on behalf of users; the frontend embeds `<RemoteControl />` from `@limrun/ui` to stream the live simulator into the product UI.
+
+The CLI wraps the SDK; both reach every operation.
+
+## Architecture
+
+<Frame>
+  <img src="/images/diagrams/architecture.png" alt="Two-stage architecture diagram. The control plane at api.limrun.com is authenticated with the org API key. Each instance returns a per-instance token plus URLs for HTTP control, WebSocket control, the browser stream, the MCP server, and on Android the ADB tunnel." />
+</Frame>
+
+An *instance* is anything you create through Limrun: an iOS simulator, an Android emulator, or an Xcode build sandbox. Each one has an ID, exposes its own endpoints, and lives until you delete it or its inactivity timeout fires.
+
+Limrun is split into a control plane (where you create and manage instances) and per-instance data planes (where you actually interact with each instance). Your org API key authenticates the control plane and the per-instance MCP server; each instance returns its own per-instance token for everything else.
+
+Each instance also exposes a signed stream URL with a token baked into it. Anyone with the URL can open the running simulator in a browser without signing in.
+
+The CLI, SDKs, and `<RemoteControl />` all wrap the same REST surface. MCP-aware tools can call the per-instance MCP server directly.
+
+## How to get started
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Get the CLI installed and run an iOS app on a remote simulator in 3 minutes.
+    Get the CLI installed and run an iOS app on a remote simulator in three minutes.
   </Card>
   <Card title="CLI for coding agents" icon="bot" href="/agents/cli">
-    Drop-in skill page for Claude Code, Cursor, and Codex. Install the `lim` CLI and the bundled `limrun-ios` skill.
+    The cookbook page coding agents use to drive a build, test, ship loop.
+  </Card>
+  <Card title="Embed the simulator" icon="monitor-play" href="/platform/embed-simulator">
+    Stream a live iOS or Android instance into your web app with `<RemoteControl />` from `@limrun/ui`.
   </Card>
   <Card title="Build with remote Xcode" icon="hammer" href="/ios/build-with-xcode">
     Source sync, `xcodebuild` over SSE, code signing, IPA upload to Asset Storage.
   </Card>
-  <Card title="Embed the simulator" icon="monitor-play" href="/platform/embed-simulator">
-    Stream an iOS or Android instance into your web app with `<RemoteControl />` from `@limrun/ui`.
-  </Card>
 </CardGroup>
-
-## How it fits together
-
-The CLI, the four SDKs, the per-instance MCP server, and `<RemoteControl />` all talk to the same REST API at `https://api.limrun.com`.
-
-**Two credentials show up across the surface:**
-
-| Credential | Where it comes from | What it authenticates |
-|---|---|---|
-| **Org API key** | `LIM_API_KEY` env var (prefix `lim_…`) | Control plane (`api.limrun.com`) and the per-instance MCP server |
-| **Per-instance token** | `instance.status.token`, returned by `create` | Device control: `apiUrl`, `endpointWebSocketUrl`, ADB tunnel, `<RemoteControl />`, Xcode sandbox URL |
-
-<Frame>
-  <img src="/images/diagrams/architecture.png" alt="Two-stage architecture diagram. Control plane: api.limrun.com authenticated with an org API key, accepting POST /v1/ios_instances, POST /v1/android_instances, POST /v1/xcode_instances, and PUT /v1/assets. Each instance returns status URLs plus a per-instance token. Per-instance data plane: apiUrl drives SDK/CLI device control; endpointWebSocketUrl streams to RemoteControl; signedStreamUrl is the browser watch URL with token embedded; adbWebSocketUrl is the Android ADB tunnel; mcpUrl is the per-instance MCP server authenticated with the org API key; sandbox.xcode.url is xcodebuild over SSE." />
-</Frame>
-
-**Mix-and-match is the point.** Create an instance from a Node backend, stream it to a React frontend with `<RemoteControl />`, and drive it from a Python notebook on the side. Every client in the ecosystem connects through one or more of the URLs above:
-
-- **`lim` CLI** (`@limrun/cli`)
-- **SDKs** for TypeScript, Python, Go, Java
-- **Per-instance MCP server** (Claude Code, Cursor, custom MCP clients)
-- **`<RemoteControl />`** from `@limrun/ui`
-- **`@limrun/appium-xcuitest-driver`** for Appium-based iOS testing
-
-See [SDK reference](/reference#credentials) for the full auth matrix.
