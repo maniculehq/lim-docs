@@ -1,0 +1,178 @@
+---
+title: "Test In-App Purchases"
+description: "Drive real StoreKit purchase flows on a remote iOS simulator with a local `.storekit` config. No Apple Account, no sandbox tester."
+---
+
+Limrun's iOS instances support [StoreKit's local test environment](https://developer.apple.com/documentation/storekit/in-app_purchase/testing_at_all_stages_of_development_with_xcode_and_sandbox_environments). You provision a `.storekit` configuration file on the device and StoreKit serves products, prices, and purchase prompts from it. No real Apple Account, no sandbox tester credentials, no real money.
+
+Two flows are supported: **explicit** (you have the `.storekit` file already) and **discover** (let Limrun auto-generate one by watching what StoreKit fetches at runtime).
+
+## Prerequisites
+
+StoreKit local testing requires the Xcode toolchain to be present on the device. Provision an iOS instance with the Xcode sandbox enabled:
+
+<CodeGroup>
+```ts TypeScript
+const instance = await lim.iosInstances.create({
+  wait: true,
+  reuseIfExists: true,
+  metadata: { labels: { name: 'iap-test' } },
+  spec: {
+    sandbox: { xcode: { enabled: true } },
+  },
+});
+```
+
+```python Python
+instance = client.ios_instances.create(
+    wait=True,
+    reuse_if_exists=True,
+    metadata={"labels": {"name": "iap-test"}},
+    spec={"sandbox": {"xcode": {"enabled": True}}},
+)
+```
+
+```go Go
+instance, err := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
+    Wait:          limrun.Bool(true),
+    ReuseIfExists: limrun.Bool(true),
+    Metadata: limrun.IosInstanceNewParamsMetadata{
+        Labels: map[string]string{"name": "iap-test"},
+    },
+    Spec: limrun.IosInstanceNewParamsSpec{
+        Sandbox: limrun.IosInstanceNewParamsSpecSandbox{
+            Xcode: limrun.IosInstanceNewParamsSpecSandboxXcode{
+                Enabled: limrun.Bool(true),
+            },
+        },
+    },
+})
+```
+
+```java Java
+IosInstance instance = client.iosInstances().create(
+    IosInstanceCreateParams.builder()
+        .wait(true)
+        .reuseIfExists(true)
+        .metadata(IosInstanceCreateParams.Metadata.builder()
+            .labels(IosInstanceCreateParams.Metadata.Labels.builder()
+                .putAdditionalProperty("name", "iap-test")
+                .build())
+            .build())
+        .spec(IosInstanceCreateParams.Spec.builder()
+            .sandbox(IosInstanceCreateParams.Spec.Sandbox.builder()
+                .xcode(IosInstanceCreateParams.Spec.Sandbox.Xcode.builder()
+                    .enabled(true)
+                    .build())
+                .build())
+            .build())
+        .build()
+);
+```
+
+```bash CLI
+lim ios create --xcode --reuse-if-exists --label name=iap-test
+```
+</CodeGroup>
+
+The StoreKit helpers (`setStoreKitConfig`, `discoverStoreKitConfig`, `clearStoreKitConfig`) are TypeScript-only today. Python and Go users who need them have to drive the `.storekit` upload through raw REST against the instance's `apiUrl` until the SDK helpers ship in those languages.
+
+Then build and install your app the [usual way](/ios/build-with-xcode):
+
+```ts
+const xcode = await lim.xcodeInstances.createClient({
+  apiUrl: instance.status.sandbox!.xcode!.url!,
+  token: instance.status.token,
+});
+
+await xcode.sync('./my-app', { watch: false });
+const build = xcode.xcodebuild({ scheme: 'MyApp' });
+build.stdout.on('data', (line) => process.stdout.write(line));
+await build;
+```
+
+Open an iOS device-control client for the StoreKit calls:
+
+```ts
+import { Ios } from '@limrun/api';
+
+const ios = await Ios.createInstanceClient({
+  apiUrl: instance.status.apiUrl!,
+  token: instance.status.token,
+});
+```
+
+## Explicit flow: upload a `.storekit` file
+
+If you already have a `.storekit` config (Xcode → File → New → File → StoreKit Configuration), upload it from disk. The SDK accepts a `Buffer` or `Uint8Array`.
+
+```ts
+import fs from 'node:fs';
+
+const bundleId = 'com.example.MyApp';
+const bytes = fs.readFileSync('./Products.storekit');
+
+await ios.setStoreKitConfig(bundleId, bytes);
+```
+
+The config is associated with the bundle ID, not the global StoreKit daemon. From this point on, any in-app purchase the app initiates serves products from your file. Relaunch the app to pick up the config:
+
+```ts
+await ios.terminateApp(bundleId);
+await ios.launchApp(bundleId);
+```
+
+## Discover flow: auto-generate the config
+
+If you don't have a `.storekit` file but your app fetches products from App Store Connect at runtime, Limrun can snapshot StoreKit's local cache and produce a `.storekit` for you.
+
+```ts
+const result = await ios.discoverStoreKitConfig(bundleId, {
+  timeoutSeconds: 120,  // 1..300, default 120, capped server-side
+});
+
+console.log('Items discovered:', result.itemsFound);
+console.log('Products:', result.productsCount);
+console.log('Subscriptions:', result.subscriptionsCount);
+console.log('Subscription groups:', result.subscriptionGroupsCount);
+```
+
+While `discoverStoreKitConfig` waits, your app must trigger at least one StoreKit fetch (typically by opening the in-app paywall) so StoreKit pulls product metadata from Apple's servers and the local cache is populated. Limrun reads from that cache and emits a `.storekit` config.
+
+After discovery succeeds, future purchases on the same bundle ID are served from the auto-generated local config; you don't need to call `setStoreKitConfig` separately.
+
+## Test a purchase
+
+Drive the UI through your paywall:
+
+```ts
+await ios.openUrl('myapp://settings/upgrade');                // or however your app gets there
+await ios.tapElement({ AXLabel: 'Subscribe Monthly' });
+// StoreKit shows its purchase sheet, populated from your local config
+await ios.tapElement({ AXLabel: 'Confirm' });
+```
+
+StoreKit's `Transaction.updates` and `purchase()` results behave identically to the real sandbox, so your app code doesn't need to know it's running against a local config. Stub out receipt-validation servers separately if your app talks to one.
+
+## Clear or replace the config
+
+Switch back to real sandbox or production behavior with `clearStoreKitConfig`. You can also overwrite with another `.storekit` file using `setStoreKitConfig` again; the latest call wins.
+
+```ts
+await ios.clearStoreKitConfig(bundleId);
+```
+
+## CLI
+
+The CLI does not expose StoreKit commands directly today. Use the TypeScript SDK for the explicit and discover flows, or the [Python](/reference#python) / [Go](/reference#go) / [Java](/reference#java) SDKs once those operations land in your language of choice.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Run an iOS Simulator" icon="smartphone" href="/ios/run-simulator">
+    The full device-control surface for driving the purchase flow.
+  </Card>
+  <Card title="Build with remote Xcode" icon="hammer" href="/ios/build-with-xcode">
+    Build and install the app under test on this instance.
+  </Card>
+</CardGroup>

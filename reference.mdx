@@ -1,0 +1,560 @@
+---
+title: "SDK reference"
+description: "Authentication, errors, resource lifecycles, and the resources × CRUD matrix in cURL, TypeScript, Python, Go, Java, and the `lim` CLI."
+---
+
+This page is the language-agnostic reference for the Limrun REST API. Each operation is shown with code-group tabs for cURL, the four official SDKs (TypeScript, Python, Go, Java), and the `lim` CLI.
+
+The OpenAPI spec is the source of truth. Stainless generates each SDK from it, so method names and parameter shapes are consistent across languages once you account for casing conventions (camelCase in TypeScript, snake_case in Python, PascalCase in Go).
+
+## Base URL
+
+```
+https://api.limrun.com
+```
+
+Override with the `LIMRUN_BASE_URL` environment variable (Java SDK) or per-client option (TypeScript / Python / Go).
+
+## Authentication
+
+Every request authenticates with a single API key (prefix `lim_`). Generate keys at [console.limrun.com](https://console.limrun.com).
+
+The CLI and every SDK accept the key from the `LIM_API_KEY` environment variable by default:
+
+<CodeGroup>
+```bash cURL
+curl https://api.limrun.com/v1/ios_instances \
+  -H "Authorization: Bearer $LIM_API_KEY"
+```
+
+```ts TypeScript
+import Limrun from '@limrun/api';
+
+const lim = new Limrun({
+  apiKey: process.env['LIM_API_KEY'],   // defaults to LIM_API_KEY env, can be omitted
+});
+```
+
+```python Python
+from limrun_api import Limrun
+
+client = Limrun(
+    api_key=os.environ.get("LIM_API_KEY"),   # defaults to LIM_API_KEY env, can be omitted
+)
+```
+
+```go Go
+import (
+    "github.com/limrun-inc/go-sdk"
+    "github.com/limrun-inc/go-sdk/option"
+)
+
+client := limrun.NewClient(option.WithAPIKey("..."))  // defaults to LIM_API_KEY env
+```
+
+```java Java
+import com.limrun.api.client.LimrunClient;
+import com.limrun.api.client.okhttp.LimrunOkHttpClient;
+
+LimrunClient client = LimrunOkHttpClient.fromEnv();   // reads LIM_API_KEY + LIMRUN_BASE_URL
+```
+
+```bash CLI
+export LIM_API_KEY=lim_...
+```
+</CodeGroup>
+
+## Credentials
+
+Two credentials show up in most workflows. Mixing them up is the most common integration bug.
+
+| Credential | Where you get it | Use for |
+|---|---|---|
+| **Org API key** (`lim_...`) | [console.limrun.com](https://console.limrun.com) → Settings → API Keys; `lim login`; or `LIM_API_KEY` | REST control plane (`api.limrun.com`), including create/list/delete. Also **MCP**: `Authorization: Bearer <org API key>` on `instance.status.mcpUrl`. |
+| **Per-instance token** (`instance.status.token`) | Returned in `status` when the instance is `ready` | `apiUrl` device daemon, `endpointWebSocketUrl` (append `?token=`), `adbWebSocketUrl`, `sandbox.xcode.url`, and SDK helpers like `Ios.createInstanceClient`. Embedded in `signedStreamUrl` for browser streaming. |
+
+The org API key must never ship to a browser or end-user client. For embedded simulators, your backend holds the API key and passes only `endpointWebSocketUrl` + `status.token` to `<RemoteControl />`. See [Embed the simulator](/platform/embed-simulator#authentication-model).
+
+## Install snippets
+
+If you'd rather skip the SDK, call the API directly with `curl`. No install required.
+
+<CodeGroup>
+```bash TypeScript
+npm install @limrun/api
+```
+
+```bash Python
+pip install limrun_api
+```
+
+```bash Go
+go get -u github.com/limrun-inc/go-sdk@latest
+```
+
+```xml Java
+<!-- Maven -->
+<dependency>
+  <groupId>com.limrun.api</groupId>
+  <artifactId>limrun-java</artifactId>
+  <version>0.1.0</version>
+</dependency>
+<!-- Gradle (Kotlin DSL) -->
+<!-- implementation("com.limrun.api:limrun-java:0.1.0") -->
+```
+
+```bash CLI
+npm install --global @limrun/cli
+```
+</CodeGroup>
+
+## SDK capability matrix
+
+The four SDKs are not equivalent. Every one covers the control plane (create / get / list / delete instances and assets). Beyond that, only the TypeScript SDK is complete; the others vary. The CLI is the easiest fallback for anything your SDK doesn't cover; raw HTTP is the universal escape hatch.
+
+| Capability | TypeScript | Python | Go | Java |
+|---|---|---|---|---|
+| Instance CRUD (iOS, Android, Xcode) | ✓ | ✓ | iOS + Android only (no `XcodeInstances` service) | iOS + Android only (no `xcodeInstances()`) |
+| Asset CRUD | ✓ | ✓ | ✓ | ✓ |
+| `assets.getOrUpload` (MD5 dedup + signed PUT) | ✓ | upload manually | ✓ (`Assets.GetOrUpload`) | upload manually |
+| iOS device control (taps, screenshot, element-tree, typeText, simctl streaming, ...) | ✓ | use REST or CLI | ✓ (subset, see below) | use REST or CLI |
+| Android device control over the SDK | ✓ | use REST + ADB | use REST + ADB | use REST + ADB |
+| ADB tunnel for Android | ✓ (`startAdbTunnel`) | use external `adb` | ✓ (`tunnel.NewADB`, plus `Multiplexed`) | use external `adb` |
+| Xcode source-sync + remote `xcodebuild` | ✓ (`xcodeInstances.createClient`) | use `lim xcode build` | use `lim xcode build` | use `lim xcode build` |
+| iOS reverse tunnel for Detox-style flows | ✓ (`startReverseTunnel`) | not supported | not supported | not supported |
+| iOS app-log / syslog streaming | ✓ | not supported | not supported | not supported |
+| iOS video recording | ✓ | not supported | not supported | not supported |
+| StoreKit local-config helpers | ✓ | not supported | not supported | not supported |
+
+The **Go iOS WebSocket client** (`github.com/limrun-inc/go-sdk/websocket/ios`) covers screenshot, element-tree, tap, tap-element, type-text, press-key, launch-app, list-apps, open-url, install-app, lsof, set-orientation, increment/decrement/set element value, and `simctl` streaming. It does **not** include terminate-app, scroll, performActions, or video recording today.
+
+If you're on Python or Java and need any of the device-control or build surfaces, the canonical option is the `lim` CLI from `@limrun/cli` (shell out from your code) or raw REST calls against the URLs returned in `instance.status`. The CLI is feature-complete; the SDKs catch up later.
+
+## Errors
+
+Errors are returned as JSON with an HTTP status code that maps to a typed error class in every SDK.
+
+| Status | TypeScript / Python / Java / Go | Meaning |
+|---|---|---|
+| `400` | `BadRequestError` | Malformed input or invalid combination of parameters. |
+| `401` | `AuthenticationError` | Missing or invalid API key. |
+| `403` | `PermissionDeniedError` | API key lacks the necessary permission. |
+| `404` | `NotFoundError` | The instance, asset, or other resource does not exist. |
+| `409` | `ConflictError` | Conflicting state (e.g. instance already terminated). |
+| `422` | `UnprocessableEntityError` | Validation error: request shape is valid but semantically rejected. |
+| `429` | `RateLimitError` | Rate limit hit. Retry with backoff. |
+| `≥500` | `InternalServerError` | Server-side issue. SDKs auto-retry by default. |
+| n/a | `APIConnectionError` | Network failure before a response. |
+| n/a | `APIConnectionTimeoutError` | Request timed out. |
+| n/a | `APIUserAbortError` | The request was aborted by the caller. |
+
+The SDKs auto-retry on `408`, `409`, `429`, `5xx`, and connection errors. The default is 2 retries with exponential backoff. Configure or disable with the per-client `maxRetries` option.
+
+```ts TypeScript example
+import Limrun from '@limrun/api';
+
+const lim = new Limrun({ maxRetries: 5 });
+
+try {
+  const instance = await lim.iosInstances.create({ wait: true });
+} catch (err) {
+  if (err instanceof Limrun.APIError) {
+    console.log(err.status, err.name, err.headers);
+  } else {
+    throw err;
+  }
+}
+```
+
+## Query params: `wait` and `reuseIfExists`
+
+Two query params show up on every `create` call across resources.
+
+| Param | Type | Meaning |
+|---|---|---|
+| `wait` | boolean | Return only after the instance reaches `ready`. Without `wait`, the call returns immediately with `state: 'creating'`. |
+| `reuseIfExists` | boolean | If an instance with the same `(region, labels)` exists, return it instead of creating a new one. |
+
+Use `wait: true` for interactive workflows where you need the URLs immediately. Use `reuseIfExists: true` whenever you want repeated calls (CLI re-runs, retries, the same PR's CI runs) to converge on the same instance.
+
+## Instance state machine
+
+Every iOS, Android, and Xcode instance moves through the same lifecycle, from `creating` while hardware is being provisioned, through `assigned` while it boots, to `ready` when the URLs in `status` are usable, and finally to `terminated`.
+
+```
+   creating ──┬──► assigned ──► ready ──► terminated
+              │
+              └──► (error) ──► terminated  (status.errorMessage set)
+```
+
+| State | Meaning |
+|---|---|
+| `unknown` | Default placeholder; should not be returned for live instances. |
+| `creating` | Provisioning. URLs in `status` are not yet populated. |
+| `assigned` | Hardware has been assigned; instance is booting. |
+| `ready` | Fully booted. All URLs populated. Safe to connect a control client. |
+| `terminated` | Stopped, either by explicit delete, inactivity timeout, hard timeout, or error. |
+
+`instance.status.errorMessage` is set when the instance terminated due to an error.
+
+## Status URL surface
+
+Every successful `wait: true` create returns a `status` block with the URLs the data plane needs.
+
+| Field | iOS | Android | Xcode | Use |
+|---|---|---|---|---|
+| `token` | ✓ | ✓ | ✓ | Per-instance bearer for `apiUrl`, `endpointWebSocketUrl`, `adbWebSocketUrl`, `sandbox.xcode.url`; embedded in `signedStreamUrl`. |
+| `apiUrl` | ✓ | ✓ | ✓ | HTTP base for the per-instance device daemon (SDK / CLI control client). |
+| `signedStreamUrl` | ✓ | ✓ |   | Browser watch URL with token embedded (no org API key in the browser). |
+| `endpointWebSocketUrl` | ✓ | ✓ |   | WebSocket for `<RemoteControl />`; pass `?token=<status.token>`. |
+| `mcpUrl` | ✓ | ✓ |   | Per-instance MCP HTTP endpoint. Auth with **org API key** header, not `status.token`. See [MCP](/agents/mcp). |
+| `adbWebSocketUrl` |   | ✓ |   | ADB tunnel endpoint. Pass as `adbUrl` to `createInstanceClient`. |
+| `targetHttpPortUrlPrefix` | ✓ | ✓ |   | Reverse-proxy prefix for tunneled HTTP ports (used by Appium/WDA). |
+| `sandbox.xcode.url` | ✓ (conditional) |   |   | Xcode sandbox API URL when `spec.sandbox.xcode.enabled: true`. |
+| `sandbox.playwrightAndroid.url` |   | ✓ (conditional) |   | CDP URL when `spec.sandbox.playwrightAndroid.enabled: true`. |
+
+## Regions and labels
+
+`spec.region` pins an instance to a region (e.g. `eu-north1`, `us-east1`). If omitted, Limrun schedules based on `spec.clues` and current availability. The console's **Analytics** tab breaks down runtime minutes per platform and per region, which is the canonical place to see which regions an org has used:
+
+<Frame>
+  <img src="/images/console/11-analytics.png" alt="Console Analytics tab showing daily runtime minutes for Android, iOS, and XCode, broken down by eu-north1 and us-east1 regions" />
+</Frame>
+
+`metadata.labels` is a free-form `{ [key: string]: string }` map. The same labels do three jobs at once: they identify instances for `reuseIfExists`, they filter listings via `labelSelector` (a comma-separated `key=value` list), and they group instances for bulk operations like "delete everything tagged `pr=42`."
+
+Useful label keys for most workflows are `tenant`, `user`, `session`, `pr`, `repo`, `agent`, and `managed_by`. Avoid keys that might overlap with metadata Limrun adds internally.
+
+## Resources × CRUD
+
+The four resources (`iosInstances`, `androidInstances`, `xcodeInstances`, `assets`) all support the same five operations. Method names follow each language's convention.
+
+### Create an iOS instance
+
+<CodeGroup>
+```bash cURL
+curl -X POST https://api.limrun.com/v1/ios_instances?wait=true&reuseIfExists=true \
+  -H "Authorization: Bearer $LIM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "metadata": { "labels": { "session": "demo" } },
+    "spec": {
+      "model": "iphone",
+      "region": "eu-north1",
+      "sandbox": { "xcode": { "enabled": true } }
+    }
+  }'
+```
+
+```ts TypeScript
+const instance = await lim.iosInstances.create({
+  wait: true,
+  reuseIfExists: true,
+  metadata: { labels: { session: 'demo' } },
+  spec: {
+    model: 'iphone',
+    region: 'eu-north1',
+    sandbox: { xcode: { enabled: true } },
+  },
+});
+```
+
+```python Python
+instance = client.ios_instances.create(
+    wait=True,
+    reuse_if_exists=True,
+    metadata={"labels": {"session": "demo"}},
+    spec={
+        "model": "iphone",
+        "region": "eu-north1",
+        "sandbox": {"xcode": {"enabled": True}},
+    },
+)
+```
+
+```go Go
+instance, err := client.IosInstances.New(ctx, limrun.IosInstanceNewParams{
+    Wait:          param.NewOpt(true),
+    ReuseIfExists: param.NewOpt(true),
+    Metadata: limrun.IosInstanceNewParamsMetadata{
+        Labels: map[string]string{"session": "demo"},
+    },
+    Spec: limrun.IosInstanceNewParamsSpec{
+        Model:  limrun.IosInstanceNewParamsSpecModelIphone,
+        Region: param.NewOpt("eu-north1"),
+        Sandbox: limrun.IosInstanceNewParamsSpecSandbox{
+            Xcode: limrun.IosInstanceNewParamsSpecSandboxXcode{
+                Enabled: param.NewOpt(true),
+            },
+        },
+    },
+})
+```
+
+```java Java
+// Attach an Xcode sandbox with spec.sandbox.xcode in cURL/TypeScript/Python/Go,
+// or use `lim ios create --xcode`. The Java SDK may lag the OpenAPI spec for sandbox fields.
+IosInstance instance = client.iosInstances().create(
+    IosInstanceCreateParams.builder()
+        .wait_(true)
+        .reuseIfExists(true)
+        .metadata(IosInstanceCreateParams.Metadata.builder()
+            .labels(Map.of("session", "demo"))
+            .build())
+        .spec(IosInstanceCreateParams.Spec.builder()
+            .model(IosInstanceCreateParams.Spec.Model.IPHONE)
+            .region("eu-north1")
+            .build())
+        .build()
+);
+```
+
+```bash CLI
+lim ios create --reuse-if-exists --xcode \
+  --model iphone --region eu-north1 \
+  --label session=demo
+```
+</CodeGroup>
+
+### List iOS instances
+
+<CodeGroup>
+```bash cURL
+curl "https://api.limrun.com/v1/ios_instances?labelSelector=session%3Ddemo&state=ready" \
+  -H "Authorization: Bearer $LIM_API_KEY"
+```
+
+```ts TypeScript
+// Auto-paginating
+for await (const inst of lim.iosInstances.list({ labelSelector: 'session=demo', state: 'ready' })) {
+  console.log(inst.metadata.id);
+}
+
+// Single page
+const page = await lim.iosInstances.list({ limit: 50 });
+for (const inst of page.items) console.log(inst.metadata.id);
+while (page.hasNextPage()) {
+  const next = await page.getNextPage();
+  // ...
+}
+```
+
+```python Python
+for inst in client.ios_instances.list(label_selector="session=demo", state="ready"):
+    print(inst.metadata.id)
+```
+
+```go Go
+iter := client.IosInstances.ListAutoPaging(ctx, limrun.IosInstanceListParams{
+    LabelSelector: param.NewOpt("session=demo"),
+    State:         param.NewOpt("ready"),
+})
+for iter.Next() {
+    inst := iter.Current()
+    fmt.Println(inst.Metadata.ID)
+}
+```
+
+```java Java
+IosInstanceListPage page = client.iosInstances().list(
+    IosInstanceListParams.builder()
+        .labelSelector("session=demo")
+        .state("ready")
+        .build()
+);
+page.items().forEach(inst -> System.out.println(inst.metadata().id()));
+```
+
+```bash CLI
+lim ios list --label-selector "session=demo" --state ready
+```
+</CodeGroup>
+
+### Get / Delete an iOS instance
+
+<CodeGroup>
+```bash cURL
+curl https://api.limrun.com/v1/ios_instances/<id> -H "Authorization: Bearer $LIM_API_KEY"
+curl -X DELETE https://api.limrun.com/v1/ios_instances/<id> -H "Authorization: Bearer $LIM_API_KEY"
+```
+
+```ts TypeScript
+const inst = await lim.iosInstances.get(id);
+await lim.iosInstances.delete(id);
+```
+
+```python Python
+inst = client.ios_instances.get(id)
+client.ios_instances.delete(id)
+```
+
+```go Go
+inst, _ := client.IosInstances.Get(ctx, id)
+_ = client.IosInstances.Delete(ctx, id)
+```
+
+```java Java
+IosInstance inst = client.iosInstances().get(id);
+client.iosInstances().delete(id);
+```
+
+```bash CLI
+lim ios get <id>
+lim ios delete <id>           # or `lim ios delete` for the last-created
+```
+</CodeGroup>
+
+### Android instances
+
+The Android operations have the same shape as iOS. Substitute `androidInstances` (TS / Java), `android_instances` (Python), `AndroidInstances` (Go), or `lim android *` (CLI). The Android-specific pieces are `clues` accepting `{ kind: 'OSVersion', osVersion: '13'|'14'|'15' }`, the multi-asset shapes on `initialAssets`, and `spec.sandbox.playwrightAndroid.enabled`.
+
+### Xcode instances
+
+The TypeScript and Python SDKs expose a top-level `xcodeInstances` / `xcode_instances` resource with the same CRUD shape as iOS. The **Go and Java SDKs do not** ship an `XcodeInstances` service today; reach the same instances through one of these paths:
+
+- Set `spec.sandbox.xcode.enabled: true` when creating an iOS instance and use the iOS resource on the SDK; the Xcode sandbox URL comes back at `instance.status.sandbox.xcode.url`.
+- Or call `POST /v1/xcode_instances` directly over HTTP.
+- Or shell out to `lim xcode create` / `lim xcode build`.
+
+### Assets
+
+Assets use `getOrCreate` (upsert) and `getOrUpload` (upsert plus actual upload) instead of `create`. The `os` field on `Asset` is optional; leaving it unset means the asset is available for both platforms. The **`getOrUpload` helper** that handles MD5 dedup and the signed PUT ships in the TypeScript and Go SDKs; Python and Java callers do the two-step pattern manually (call `getOrCreate`, then PUT the bytes to `signedUploadUrl` if `md5` is missing or doesn't match).
+
+<CodeGroup>
+```bash cURL
+# Two-step upload: get-or-create returns a signed PUT URL, then push the bytes to it.
+curl -X PUT https://api.limrun.com/v1/assets \
+  -H "Authorization: Bearer $LIM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "my-app.tar.gz" }'
+# returns signedUploadUrl + signedDownloadUrl
+
+curl -X PUT "$SIGNED_UPLOAD_URL" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @./my-app.tar.gz
+```
+
+```ts TypeScript
+// One-shot: getOrUpload computes MD5, skips re-upload if unchanged
+const asset = await lim.assets.getOrUpload({ path: './my-app.tar.gz', name: 'my-app.tar.gz' });
+
+// Manual two-step
+const asset2 = await lim.assets.getOrCreate({ name: 'my-app.tar.gz' });
+if (!asset2.md5) {
+  await fetch(asset2.signedUploadUrl, {
+    method: 'PUT',
+    body: await fs.promises.readFile('./my-app.tar.gz'),
+    headers: { 'Content-Type': 'application/octet-stream' },
+  });
+}
+
+// List
+const list = await lim.assets.list({ namePrefixFilter: 'my-app-', includeDownloadUrl: true });
+
+// Get / delete
+const a = await lim.assets.get(id, { includeDownloadUrl: true });
+await lim.assets.delete(id);
+```
+
+```python Python
+upserted = client.assets.get_or_create(name="my-app.tar.gz")
+# ... PUT bytes to upserted.signed_upload_url ...
+listed   = client.assets.list(name_prefix_filter="my-app-", include_download_url=True)
+fetched  = client.assets.get(id, include_download_url=True)
+client.assets.delete(id)
+```
+
+```go Go
+// Helper: getOrUpload
+asset, _ := client.Assets.GetOrUpload(ctx, limrun.AssetGetOrUploadParams{
+    Path: "./my-app.apk",
+})
+// Or lower-level: GetOrNew, then PUT to signedUploadUrl yourself.
+
+list, _ := client.Assets.List(ctx, limrun.AssetListParams{
+    NamePrefixFilter:   param.NewOpt("my-app-"),
+    IncludeDownloadURL: param.NewOpt(true),
+})
+got, _ := client.Assets.Get(ctx, id, limrun.AssetGetParams{IncludeDownloadURL: param.NewOpt(true)})
+_ = client.Assets.Delete(ctx, id)
+```
+
+```java Java
+AssetGetOrCreateResponse upserted = client.assets().getOrCreate(
+    AssetGetOrCreateParams.builder().name("my-app.tar.gz").build()
+);
+List<Asset> listed  = client.assets().list(
+    AssetListParams.builder().namePrefixFilter("my-app-").includeDownloadUrl(true).build()
+);
+Asset fetched = client.assets().get(id);
+client.assets().delete(id);
+```
+
+```bash npm CLI
+lim asset push ./my-app.tar.gz --name my-app-v1.tar.gz
+lim asset list --name my-app-v1.tar.gz --download-url
+lim asset list <id>
+lim asset pull <id_or_name> --output ./downloads/
+lim asset delete <id>
+```
+
+</CodeGroup>
+
+## Auto-pagination
+
+`list` endpoints in TypeScript / Python / Go return iterable objects. Java returns a page object you can step through manually.
+
+<CodeGroup>
+```ts TypeScript
+for await (const inst of lim.iosInstances.list()) {
+  console.log(inst.metadata.id);
+}
+```
+
+```python Python
+for inst in client.ios_instances.list():
+    print(inst.metadata.id)
+```
+
+```go Go
+iter := client.IosInstances.ListAutoPaging(ctx, limrun.IosInstanceListParams{})
+for iter.Next() {
+    fmt.Println(iter.Current().Metadata.ID)
+}
+```
+
+```java Java
+IosInstanceListPage page = client.iosInstances().list();
+while (page.hasNextPage()) {
+    page.items().forEach(inst -> System.out.println(inst.metadata().id()));
+    page = page.getNextPage().orElseThrow();
+}
+```
+</CodeGroup>
+
+## OpenAPI spec
+
+The REST API is documented on [lim.run](https://lim.run) and in each SDK's generated reference (`typescript-sdk/api.md`, `python-sdk/api.md`, `go-sdk/api.md`). The SDKs are generated from the OpenAPI spec via [Stainless](https://www.stainless.com/).
+
+## Timeouts, retries, logging
+
+All four SDKs default to a 5-minute request timeout and 2 retries with exponential backoff. Configure both per-client with the `timeout` and `maxRetries` options, or override per-request.
+
+The TypeScript SDK also accepts a `logger` and `logLevel` (`'debug' | 'info' | 'warn' | 'error' | 'off'`), settable through the `LIMRUN_LOG` env var. At `'debug'` the SDK logs full HTTP requests and responses. Auth headers are redacted, but sensitive data in request and response bodies is not, so keep that in mind before turning debug logging on in production.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    The 3-minute path from `npm install` to a running simulator with your app on it.
+  </Card>
+  <Card title="Run an iOS Simulator" icon="smartphone" href="/ios/run-simulator">
+    The data-plane surface that lives behind `instance.status.apiUrl`.
+  </Card>
+  <Card title="Run an Android Emulator" icon="tablet-smartphone" href="/android/run-emulator">
+    ADB tunnel and Android device-control surface.
+  </Card>
+  <Card title="CLI for coding agents" icon="bot" href="/agents/cli">
+    Every `lim` command tuned for agent workflows.
+  </Card>
+</CardGroup>

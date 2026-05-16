@@ -1,0 +1,450 @@
+---
+title: "Run an Android Emulator"
+description: "Drive a remote Android emulator via ADB tunnel, the SDK control plane, or existing Android tooling, from any Linux, macOS, or Windows host."
+---
+
+A Limrun Android instance is a fully-booted Android emulator exposed two ways. The SDK exposes a narrow device-control surface (taps, screenshots, element-tree, recording) for the things that benefit from a typed API. The more important door, though, is an **ADB tunnel** that turns the remote emulator into a local-looking device for every Android tool you already use. Android Studio, `adb`, `scrcpy`, Appium, and Detox all auto-detect the device once the tunnel is up.
+
+The SDK surface is intentionally narrow because the tunnel carries the rest of the ecosystem.
+
+The Android **device-control client** (`createInstanceClient` with taps, element-tree, etc.) ships in the **TypeScript SDK only** today. The **ADB tunnel** ships in TypeScript and Go (the Go package is `github.com/limrun-inc/go-sdk/tunnel`). Python and Java users authenticate with the SDK to provision instances, then drive everything else through the tunnel using ordinary `adb` commands. See [SDK capability matrix](/reference#sdk-capability-matrix).
+
+The console's Playground is the no-code way to spin one up. Pick an OS version (14 or 15), optionally pick an APK to preinstall, hit **Start**:
+
+<Frame>
+  <img src="/images/console/01-playground-empty.png" alt="Console Playground showing the Android 15 default with Organization, Operating System, Apps, Open URL, and Start controls" />
+</Frame>
+
+## Configure the instance
+
+<CodeGroup>
+```ts TypeScript
+import Limrun from '@limrun/api';
+
+const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
+
+const instance = await lim.androidInstances.create({
+  wait: true,
+  reuseIfExists: true,
+  metadata: { labels: { app: 'my-app', session: 'demo' } },
+  spec: {
+    region: 'eu-north1',
+    inactivityTimeout: '10m',
+    hardTimeout: '0',
+    clues: [
+      { kind: 'ClientIP', clientIp: '203.0.113.42' },
+      { kind: 'OSVersion', osVersion: '15' },        // '13' | '14' | '15'
+    ],
+    initialAssets: [
+      { kind: 'App', source: 'AssetName', assetName: 'appstore/Expo-Go-54.0.6.apk' },
+    ],
+    sandbox: { playwrightAndroid: { enabled: false } },
+  },
+});
+```
+
+```python Python
+instance = client.android_instances.create(
+    wait=True,
+    reuse_if_exists=True,
+    metadata={"labels": {"app": "my-app", "session": "demo"}},
+    spec={
+        "region": "eu-north1",
+        "inactivity_timeout": "10m",
+        "hard_timeout": "0",
+        "clues": [
+            {"kind": "ClientIP", "client_ip": "203.0.113.42"},
+            {"kind": "OSVersion", "os_version": "15"},
+        ],
+        "initial_assets": [
+            {"kind": "App", "source": "AssetName", "asset_name": "appstore/Expo-Go-54.0.6.apk"},
+        ],
+    },
+)
+```
+
+```go Go
+instance, err := lim.AndroidInstances.New(ctx, limrun.AndroidInstanceNewParams{
+    Wait:          limrun.Bool(true),
+    ReuseIfExists: limrun.Bool(true),
+    Metadata: limrun.AndroidInstanceNewParamsMetadata{
+        Labels: map[string]string{"app": "my-app", "session": "demo"},
+    },
+    Spec: limrun.AndroidInstanceNewParamsSpec{
+        Region:            limrun.String("eu-north1"),
+        InactivityTimeout: limrun.String("10m"),
+        HardTimeout:       limrun.String("0"),
+    },
+})
+```
+
+```java Java
+import com.limrun.api.client.LimrunClient;
+import com.limrun.api.client.okhttp.LimrunOkHttpClient;
+import com.limrun.api.models.androidinstances.AndroidInstance;
+import com.limrun.api.models.androidinstances.AndroidInstanceCreateParams;
+
+LimrunClient client = LimrunOkHttpClient.fromEnv();
+
+AndroidInstance instance = client.androidInstances().create(
+    AndroidInstanceCreateParams.builder()
+        .wait(true)
+        .reuseIfExists(true)
+        .metadata(AndroidInstanceCreateParams.Metadata.builder()
+            .labels(AndroidInstanceCreateParams.Metadata.Labels.builder()
+                .putAdditionalProperty("app", "my-app")
+                .putAdditionalProperty("session", "demo")
+                .build())
+            .build())
+        .spec(AndroidInstanceCreateParams.Spec.builder()
+            .region("eu-north1")
+            .inactivityTimeout("10m")
+            .hardTimeout("0")
+            .build())
+        .build()
+);
+```
+
+```bash CLI
+lim android create --reuse-if-exists \
+  --region eu-north1 \
+  --inactivity-timeout 10m \
+  --label app=my-app --label session=demo \
+  --install-asset appstore/Expo-Go-54.0.6.apk
+```
+</CodeGroup>
+
+### `spec` reference
+
+| Field | Type | Meaning |
+|---|---|---|
+| `region` | string | Pin region, e.g. `eu-north1`. |
+| `inactivityTimeout` | duration | `1m`, `10m`, `3h`. Default `3m`. `0` = org default. |
+| `hardTimeout` | duration | Forced termination. Default `0` = no cap. |
+| `clues` | array | `{ kind: 'ClientIP', clientIp }` and `{ kind: 'OSVersion', osVersion }`. `osVersion` accepts `'13'`, `'14'`, or `'15'`. |
+| `initialAssets` | array | Apps to install at boot. Can install multiple in one boot (see below). |
+| `sandbox.playwrightAndroid.enabled` | boolean | Co-locate the Playwright Android CDP server with the emulator for low-latency browser automation. See [Testing with Playwright](/testing/playwright). |
+
+### Multi-install at boot
+
+`initialAssets` accepts several shapes. Pick whatever fits your source of truth:
+
+| Shape | Use |
+|---|---|
+| `{ kind: 'App', source: 'AssetName', assetName: 'my.apk' }` | Single asset by name. |
+| `{ kind: 'App', source: 'AssetNames', assetNames: ['a.apk', 'b.apk'] }` | Multiple assets by name. |
+| `{ kind: 'App', source: 'AssetIDs', assetIds: ['asset_abc', 'asset_def'] }` | Multiple assets by ID. |
+| `{ kind: 'App', source: 'URL', url: 'https://...' }` | One URL. |
+| `{ kind: 'App', source: 'URLs', urls: ['https://...', '...'] }` | Multiple URLs. |
+| `{ kind: 'Configuration', configuration: { kind: 'ChromeFlag', chromeFlag: 'enable-command-line-on-non-rooted-devices@1' } }` | Configuration asset used to enable Playwright over Chrome on non-rooted Android. |
+
+CLI:
+
+```bash
+# Multiple --install-asset flags
+lim android create --install-asset a.apk --install-asset b.apk
+
+# Or upload-and-install in one shot
+lim android create --install ./build.apk
+```
+
+## Where the URLs come from
+
+`instance.status` is similar to iOS, with one Android-specific field:
+
+| Status field | Use |
+|---|---|
+| `apiUrl` | HTTP base for the device daemon. Pass to `createInstanceClient`. |
+| `token` | Bearer token. |
+| `adbWebSocketUrl` | **Android-only.** WebSocket endpoint for the ADB tunnel. |
+| `endpointWebSocketUrl` | Used by `<RemoteControl />` for streaming. |
+| `signedStreamUrl` | Browser-safe streaming URL with token embedded. |
+| `mcpUrl` | Per-instance MCP server. |
+| `sandbox.playwrightAndroid.url` | CDP URL when the Playwright sub-sandbox is enabled. |
+| `targetHttpPortUrlPrefix` | Reverse-proxy prefix for tunneled HTTP ports. |
+| `state` | `unknown` → `creating` → `assigned` → `ready` → `terminated`. |
+
+## ADB tunnel (the main door in)
+
+The ADB tunnel forwards a local TCP port on your machine to the remote emulator's ADB endpoint. Once it's up, `adb devices` lists the remote emulator and every other tool that talks ADB just works.
+
+<CodeGroup>
+```ts TypeScript
+import { createInstanceClient } from '@limrun/api';
+
+const client = await createInstanceClient({
+  apiUrl: instance.status.apiUrl!,
+  adbUrl: instance.status.adbWebSocketUrl!,   // required for the tunnel
+  token: instance.status.token,
+  adbPath: 'adb',                              // default 'adb'
+});
+
+const tunnel = await client.startAdbTunnel();
+console.log('ADB connected on', `${tunnel.address.address}:${tunnel.address.port}`);
+
+// later
+tunnel.close();
+client.disconnect();
+```
+
+```go Go
+import "github.com/limrun-inc/go-sdk/tunnel"
+
+t, err := tunnel.NewADB(instance.Status.AdbWebSocketURL, instance.Status.Token)
+if err != nil { panic(err) }
+if err := t.Start(); err != nil { panic(err) }
+defer t.Close()
+
+fmt.Println("ADB connected on", t.Addr())
+```
+
+```bash CLI
+# Auto-connect during create
+lim android create --connect
+
+# Or connect to an existing instance
+lim android connect --id android_abc...
+
+# Custom adb path
+lim android connect --adb-path /opt/homebrew/bin/adb
+```
+</CodeGroup>
+
+The tunnel binds to `127.0.0.1` on an OS-assigned port (or a port you provide) and runs `adb connect 127.0.0.1:<port>` for you. From then on:
+
+```bash
+adb devices
+# List of devices attached
+# 127.0.0.1:54xxx  device
+
+scrcpy --serial 127.0.0.1:54xxx
+adb -s 127.0.0.1:54xxx logcat
+adb -s 127.0.0.1:54xxx install ./debug.apk
+```
+
+The tunnel uses **singleton mode**: one TCP connection forwarded per WebSocket, with 30s WebSocket pings and exponential-backoff reconnection (defaults: 6 attempts, 1s base, 30s cap). A multiplexed mode also exists for use cases that need multiple TCP connections over a single WebSocket; see the [Go tunnel package](https://pkg.go.dev/github.com/limrun-inc/go-sdk/tunnel).
+
+## Install apps without the tunnel
+
+The SDK also accepts asset installs over the control WebSocket, which is useful when you don't have `adb` on hand:
+
+<CodeGroup>
+```ts TypeScript
+// From an Asset Storage URL. Server-side download + install
+await client.sendAsset('https://...build.apk');
+```
+
+```bash CLI
+# Local file (CLI uploads to Asset Storage first, then installs)
+lim android install-app ./debug.apk
+
+# Or directly from a URL
+lim android install-app https://...build.apk
+```
+</CodeGroup>
+
+## Screenshots and element tree
+
+The Android device-control surface is smaller than iOS because the tunnel covers the rest. The pieces that *are* exposed directly:
+
+```ts
+const shot = await client.screenshot();
+// { dataUri: string }, a base64 data URI you can drop straight into an <img src>
+
+const tree = await client.getElementTree();
+// { xml: string, nodes: AndroidElementNode[] }
+// nodes have text, resourceId, className, contentDesc, bounds, parsedBounds, clickable, etc.
+
+const found = await client.findElement({ text: 'Continue' }, 5);
+// { elements: AndroidElementNode[], count: number }
+```
+
+CLI:
+
+```bash
+lim android screenshot ./out.png
+lim android element-tree
+lim android find-element --text "Continue" --limit 5
+```
+
+## Find and target elements
+
+`AndroidSelector` is the criteria object: every non-undefined field must match.
+
+| Field | Match |
+|---|---|
+| `resourceId` | e.g. `com.example:id/submit` |
+| `text` | Exact visible text |
+| `contentDesc` | Accessibility content description |
+| `className` | e.g. `android.widget.Button` |
+| `packageName` | e.g. `com.example.app` |
+| `index` | Child index |
+| `clickable` / `enabled` / `focused` | Boolean state |
+| `boundsContains` | `{ x, y }`. The element's bounds contain this point. |
+
+`AndroidElementTarget = { selector?: AndroidSelector } | { x?: number; y?: number }`. Pass either a selector or explicit coordinates.
+
+## Tap, type, scroll, keys
+
+```ts
+await client.tap({ selector: { resourceId: 'com.example:id/submit' } });
+await client.tap({ x: 200, y: 400 });
+
+await client.setText(
+  { selector: { className: 'android.widget.EditText', enabled: true } },
+  'hello',
+);
+
+// Key strings: 'BACK', 'ENTER', 'A', 'TAB', 'KEYCODE_TAB', or digit strings.
+// Modifiers: 'shift', 'ctrl' / 'control', 'alt' / 'option', 'meta' / 'command' / 'cmd', 'sym', 'fn' / 'function'.
+await client.pressKey('BACK');
+await client.pressKey('A', ['shift']);
+
+await client.scrollScreen('down', 10);                                 // amount in scroll units, default 6
+await client.scrollElement(
+  { selector: { resourceId: 'com.example:id/list' } },
+  'down',
+  10,
+);
+```
+
+CLI:
+
+```bash
+lim android tap-element --resource-id "com.example:id/submit"
+lim android tap 200 400
+lim android type "hello" --resource-id "com.example:id/email"
+lim android press-key BACK
+lim android press-key A --modifier shift
+lim android scroll down --amount 10
+```
+
+## Open URLs and deeplinks
+
+```ts
+await client.openUrl('https://example.com');
+await client.openUrl('myapp://orders/42');
+```
+
+```bash
+lim android open-url "myapp://orders/42"
+```
+
+## Record video
+
+```ts
+await client.startRecording({ quality: 5 });
+// ...
+const downloadUrl = await client.stopRecording({ localPath: './demo.mp4' });
+// or:
+await client.stopRecording({ presignedUrl: '<your-s3-url>' });
+```
+
+CLI:
+
+```bash
+lim android record start --quality 5
+lim android record stop -o ./demo.mp4
+```
+
+`quality` is `5` (default) through `10`.
+
+## Connection lifecycle
+
+```ts
+client.getConnectionState();   // 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+const unsub = client.onConnectionStateChange((s) => console.log(s));
+
+client.keepAlive();
+client.disconnect();
+```
+
+Auto-reconnect defaults: 6 attempts, 1s base delay, 30s cap. Configure on `createInstanceClient`:
+
+```ts
+const client = await createInstanceClient({
+  apiUrl,
+  adbUrl,
+  token,
+  maxReconnectAttempts: 10,
+  reconnectDelay: 500,
+  maxReconnectDelay: 60_000,
+});
+```
+
+## Everything else, via ADB
+
+Once the tunnel is up, the rest of the Android toolchain Just Works. Here are common things people reach for:
+
+```bash
+# Inspect logs
+adb -s 127.0.0.1:54xxx logcat
+
+# Start an activity
+adb -s 127.0.0.1:54xxx shell am start -n com.example/.MainActivity
+
+# Install / uninstall
+adb -s 127.0.0.1:54xxx install ./debug.apk
+adb -s 127.0.0.1:54xxx uninstall com.example
+
+# Monkey test
+adb -s 127.0.0.1:54xxx shell monkey -p com.example -v 500
+
+# scrcpy stream
+scrcpy --serial 127.0.0.1:54xxx
+```
+
+## Use the Go SDK tunnel for the same flow
+
+If your runner is Go (custom CI, ops tooling), the `tunnel` package mirrors the TypeScript surface:
+
+```go
+import (
+    "context"
+    "fmt"
+
+    limrun "github.com/limrun-inc/go-sdk"
+    "github.com/limrun-inc/go-sdk/option"
+    "github.com/limrun-inc/go-sdk/tunnel"
+)
+
+func main() {
+    client := limrun.NewClient(option.WithAPIKey("..."))
+    inst, _ := client.AndroidInstances.New(context.TODO(), limrun.AndroidInstanceNewParams{})
+
+    t, _ := tunnel.NewADB(inst.Status.AdbWebSocketURL, inst.Status.Token)
+    if err := t.Start(); err != nil { panic(err) }
+    defer t.Close()
+
+    fmt.Println("adb connect", t.Addr())
+}
+```
+
+## Lifecycle and multi-tenancy
+
+The Android lifecycle follows the same pattern as iOS: label per session, reuse with `reuseIfExists`, and tear down explicitly or via a label-selector cleanup pass.
+
+```ts
+await lim.androidInstances.delete(instance.metadata.id);
+```
+
+```bash
+lim android delete <id>     # or `lim android delete` for the last-created
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Testing with Appium" icon="flask-conical" href="/testing/appium">
+    Standard Appium tests against Limrun Android via the ADB tunnel.
+  </Card>
+  <Card title="Testing with Playwright" icon="globe" href="/testing/playwright">
+    Browser automation on Chrome via the co-located CDP sandbox.
+  </Card>
+  <Card title="Embed the simulator" icon="monitor-play" href="/platform/embed-simulator">
+    Stream the emulator into a web app with `<RemoteControl />`.
+  </Card>
+  <Card title="Asset Storage" icon="package" href="/platform/asset-storage">
+    Pre-install APKs and configuration assets at boot.
+  </Card>
+</CardGroup>

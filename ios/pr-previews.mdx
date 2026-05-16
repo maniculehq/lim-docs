@@ -1,0 +1,183 @@
+---
+title: "Automatic PR Previews with GitHub Actions"
+description: "On every pull request, build the iOS app on Limrun, upload it to Asset Storage, and post a live preview link as a PR comment."
+---
+
+A pull-request preview for an iOS app is the same idea as a web-app deploy preview: every PR gets a unique build, a unique link, and reviewers can open it from anywhere with a browser. Limrun's piece is the build + the asset upload + the preview URL; GitHub Actions handles the workflow trigger and the PR comment.
+
+This page walks through wiring the standard `lim` CLI commands into a workflow. The result: every push to a PR builds your iOS app on Limrun, uploads the artifact, and posts a preview URL on the PR.
+
+## What you get on the PR
+
+After the workflow runs, the PR has a comment like this:
+
+```
+📱 iOS preview ready
+
+  Preview: https://console.limrun.com/preview?asset=my-app-pr-42.zip&platform=ios
+  Build:   1m 47s
+
+Open the preview link on any device. The Limrun console will hand off to a remote simulator pre-installed with this build.
+```
+
+## Required permissions
+
+The workflow needs to comment on the PR, so grant `pull-requests: write`:
+
+```yaml
+permissions:
+  pull-requests: write
+  contents: read
+```
+
+If your project is in an organization with restrictive defaults, also confirm Actions are allowed to comment on PRs in the repo's Actions settings.
+
+## Required secrets
+
+Set these in **Settings → Secrets and variables → Actions** on the GitHub repo:
+
+| Secret | Source |
+|---|---|
+| `LIM_API_KEY` | [console.limrun.com](https://console.limrun.com), API keys section |
+| `P12_BASE64` | (Only if signing) `base64 -i dist.p12 \| pbcopy` |
+| `P12_PASSWORD` | (Only if signing) PKCS#12 password |
+| `PROFILE_BASE64` | (Only if signing) `base64 -i MyApp.mobileprovision` |
+
+The `GITHUB_TOKEN` is provided automatically by Actions; you do not need to create one.
+
+## The workflow
+
+This is the minimum end-to-end workflow. It builds on every PR open / sync, uploads with a PR-scoped asset name, and posts a comment with the preview link.
+
+```yaml .github/workflows/ios-preview.yml
+name: iOS Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Limrun CLI
+        run: npm install --global @limrun/cli
+
+      - name: Build on Limrun
+        env:
+          LIM_API_KEY: ${{ secrets.LIM_API_KEY }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          ASSET_NAME="${REPO}-pr-${PR}.zip"
+          echo "ASSET_NAME=${ASSET_NAME}" >> $GITHUB_ENV
+
+          lim xcode create --reuse-if-exists \
+            --label pr=${PR} \
+            --label repo=${REPO}
+
+          lim xcode build . \
+            --scheme MyApp \
+            --upload "${ASSET_NAME}"
+
+      - name: Comment with preview link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const assetName = process.env.ASSET_NAME;
+            const url = `https://console.limrun.com/preview?asset=${encodeURIComponent(assetName)}&platform=ios`;
+            const body = [
+              '📱 **iOS preview ready**',
+              '',
+              `Preview: ${url}`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+```
+
+### What each step does
+
+1. **Checkout** is standard. We need the source tree to sync to the Xcode sandbox.
+2. **Install Limrun CLI** pulls `@limrun/cli` from npm. No macOS runner needed because the build runs on Limrun.
+3. **Build on Limrun** is the meat of the job. `lim xcode create --reuse-if-exists` provisions (or returns) an Xcode sandbox scoped to this PR via labels. Then `lim xcode build . --upload <name>` syncs the source, runs `xcodebuild`, and uploads the artifact to [Asset Storage](/platform/asset-storage). Naming the asset `${repo}-pr-${PR}.zip` makes the next push to the same PR overwrite it.
+4. **Comment with preview link** constructs `https://console.limrun.com/preview?asset=<name>&platform=ios` and posts it. Anyone with access to the PR can open it in the console; Limrun provisions a simulator with the uploaded build pre-installed. The asset must already exist from step 3's `--upload`.
+
+## Signing for real-device IPAs
+
+If you want the preview to also produce a signed IPA (for TestFlight-like distribution outside Limrun's hosted simulator), add `--sdk iphoneos` plus signing flags. Base64-decode the cert and profile from secrets first:
+
+```yaml
+      - name: Build signed IPA on Limrun
+        env:
+          LIM_API_KEY: ${{ secrets.LIM_API_KEY }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          echo "${{ secrets.P12_BASE64 }}"       | base64 -d > /tmp/dist.p12
+          echo "${{ secrets.PROFILE_BASE64 }}"   | base64 -d > /tmp/MyApp.mobileprovision
+
+          lim xcode build . \
+            --scheme MyApp \
+            --sdk iphoneos \
+            --certificate-p12 /tmp/dist.p12 \
+            --certificate-password "$P12_PASSWORD" \
+            --provisioning-profile /tmp/MyApp.mobileprovision \
+            --upload my-app-pr-${{ github.event.number }}.ipa
+```
+
+The build artifact lands in Asset Storage as `my-app-pr-N.ipa`. You can fetch a signed download URL with `lim asset list --name my-app-pr-N.ipa --download-url` and post that alongside the preview link.
+
+## Cleanup on PR close
+
+Each `lim xcode create` is cheap, but instances do count against your usage. Add a cleanup job that reaps everything tagged with the closed PR:
+
+```yaml
+  cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm install --global @limrun/cli
+      - name: Delete PR instances and assets
+        env:
+          LIM_API_KEY: ${{ secrets.LIM_API_KEY }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          # Delete Xcode sandboxes for this PR
+          lim xcode list --label-selector "pr=${PR},repo=${REPO}" --json \
+            | jq -r '.[].metadata.id' \
+            | xargs -r -n1 lim xcode delete
+
+          # Delete the preview asset
+          ASSET_NAME="${REPO}-pr-${PR}.zip"
+          ASSET_ID=$(lim asset list --name "${ASSET_NAME}" --json | jq -r '.[0].id // empty')
+          if [ -n "$ASSET_ID" ]; then
+            lim asset delete "$ASSET_ID"
+          fi
+```
+
+Trigger it from the same workflow file by listing `closed` in the `on.pull_request.types` array.
+
+## Why a workflow instead of a packaged Action
+
+A bespoke workflow is the most flexible shape today: you call `lim xcode build` (already the canonical build entrypoint), name the artifact however you want, and post the comment with whatever template you prefer. The same pattern works on GitLab CI, CircleCI, Buildkite, Jenkins, and any other runner that can install `npm i -g @limrun/cli` and run a shell script. No GitHub-specific dependency.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Build with remote Xcode" icon="hammer" href="/ios/build-with-xcode">
+    All the `lim xcode build` flags, including signing, multi-scheme, and additional files.
+  </Card>
+  <Card title="Asset Storage" icon="package" href="/platform/asset-storage">
+    How the uploaded build artifact is stored, accessed, and cleaned up.
+  </Card>
+</CardGroup>
