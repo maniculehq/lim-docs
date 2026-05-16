@@ -3,9 +3,21 @@ title: "Build with remote Xcode"
 description: "Sync your source, run `xcodebuild` in the cloud, stream the logs back, and install the result on a remote simulator. Or ship a signed IPA."
 ---
 
-Limrun's Xcode sandbox is a managed Mac build environment exposed over HTTPS. You sync your local source tree, run `xcodebuild` on the remote machine, and stream stdout/stderr back over SSE while the build runs. On success the artifact installs on an attached simulator, uploads to Asset Storage, or both.
+Limrun's Xcode sandbox is a managed Mac build environment exposed over HTTPS. The loop is straightforward:
 
-The build pipeline is currently driven by the **TypeScript SDK or the `lim` CLI**. Python, Go, and Java users get the control plane only (instance create/get/list/delete); for the actual sync + `xcodebuild` step, shell out to `lim xcode build` from those languages. See [SDK capability matrix](/reference#sdk-capability-matrix).
+1. **Sync** your local source tree to the sandbox.
+2. **Run `xcodebuild`** on the remote machine.
+3. **Stream** stdout/stderr back over SSE while the build runs.
+4. On success: auto-install on an attached simulator, upload to Asset Storage, or both.
+
+**SDK coverage by language:**
+
+| Surface | TypeScript | Python | Go | Java | CLI |
+|---|---|---|---|---|---|
+| Provision an Xcode instance | ✓ | ✓ | via REST (no `XcodeInstances`) | via REST (no `xcodeInstances()`) | ✓ |
+| Sync source + run `xcodebuild` | ✓ (`xcodeInstances.createClient`) | not in SDK | not in SDK | not in SDK | ✓ (`lim xcode build`) |
+
+Python, Go, and Java users provision the instance with their SDK, then shell out to `lim xcode build` for the actual sync and build. See [SDK capability matrix](/reference#sdk-capability-matrix).
 
 ## Topology: standalone vs paired with iOS
 
