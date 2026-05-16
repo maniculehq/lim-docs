@@ -1,0 +1,390 @@
+---
+title: "Asset Storage"
+description: "A managed binary store for `.ipa`, `.app.tar.gz`, `.apk`, and configuration files. Pre-install at boot, install on-demand, share preview links."
+---
+
+Asset Storage is Limrun's bucket for build artifacts and instance-level config. It's the same store that backs `lim xcode build --upload`, `initialAssets` at instance creation, and the `console.limrun.com/preview` links you post on PRs. The same asset name can be used to install across regions, across instance generations, and across users on your org.
+
+## Asset kinds
+
+Two top-level kinds:
+
+| Kind | What it is | Examples |
+|---|---|---|
+| **App** | An installable binary | `.ipa`, `.app.tar.gz` (iOS), `.apk` (Android) |
+| **Configuration** | An instance-level configuration value | Chrome flag for Playwright Android |
+
+App assets can be scoped to one OS by setting `os: 'ios' \| 'android'` on the asset, or left unscoped (the default) to install on either.
+
+## Upload an asset
+
+The simplest path is `assets.getOrUpload`. It computes the local file's MD5, checks if a matching file already exists, and skips re-upload if so. The helper ships in **TypeScript and Go** today; Python and Java users do the two-step (`getOrCreate` then PUT) manually, shown below.
+
+<CodeGroup>
+```ts TypeScript
+import { Limrun } from '@limrun/api';
+
+const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
+
+const asset = await lim.assets.getOrUpload({
+  path: './build/MyApp.app.tar.gz',
+  name: 'my-app-v1.2.3.tar.gz',     // optional, defaults to the file's basename
+});
+
+// asset.id, asset.name, asset.signedDownloadUrl, asset.md5
+```
+
+```python Python
+# Python has no getOrUpload helper today; do the two-step manually.
+import hashlib, os, requests
+
+path = "./build/MyApp.app.tar.gz"
+name = "my-app-v1.2.3.tar.gz"
+
+with open(path, "rb") as f:
+    data = f.read()
+local_md5 = hashlib.md5(data).hexdigest()
+
+asset = client.assets.get_or_create(name=name)
+if asset.md5 != local_md5:
+    r = requests.put(
+        asset.signed_upload_url,
+        data=data,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    r.raise_for_status()
+
+# asset.id, asset.name, asset.signed_download_url
+```
+
+```go Go
+asset, err := lim.Assets.GetOrUpload(ctx, limrun.AssetGetOrUploadParams{
+    Path: "./build/MyApp.app.tar.gz",
+    Name: limrun.String("my-app-v1.2.3.tar.gz"), // optional
+})
+// asset.ID, asset.Name, asset.SignedDownloadUrl, asset.MD5
+```
+
+```java Java
+// Java has no getOrUpload helper today; do the two-step manually.
+import com.limrun.api.models.assets.AssetGetOrCreateParams;
+import com.limrun.api.models.assets.AssetGetOrCreateResponse;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+
+Path path = Path.of("./build/MyApp.app.tar.gz");
+byte[] data = Files.readAllBytes(path);
+String localMd5 = HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(data));
+
+AssetGetOrCreateResponse asset = client.assets().getOrCreate(
+    AssetGetOrCreateParams.builder().name("my-app-v1.2.3.tar.gz").build()
+);
+
+if (!asset.md5().map(localMd5::equals).orElse(false)) {
+    HttpResponse<String> resp = HttpClient.newHttpClient().send(
+        HttpRequest.newBuilder(URI.create(asset.signedUploadUrl()))
+            .header("Content-Type", "application/octet-stream")
+            .PUT(HttpRequest.BodyPublishers.ofByteArray(data))
+            .build(),
+        HttpResponse.BodyHandlers.ofString()
+    );
+    if (resp.statusCode() != 200) throw new RuntimeException("upload failed: " + resp.statusCode());
+}
+```
+
+```bash CLI
+lim asset push ./build/MyApp.app.tar.gz --name my-app-v1.2.3.tar.gz
+```
+</CodeGroup>
+
+If the file's MD5 already matches an existing upload, the call returns immediately with the existing asset's URLs and no bytes are transferred. That makes it safe to call from CI on every run: only the first upload of a given artifact pays the bandwidth cost.
+
+### Manual upload via a signed URL
+
+When you need finer control (uploading from a worker, from a different host, or from a streaming source), use the lower-level `getOrCreate` and PUT to the returned `signedUploadUrl` yourself.
+
+```ts
+const asset = await lim.assets.getOrCreate({ name: 'my-app-v1.2.3.tar.gz' });
+// asset.signedUploadUrl, asset.signedDownloadUrl, asset.md5 (if exists)
+
+if (!asset.md5) {
+  const data = await fs.promises.readFile('./build/MyApp.app.tar.gz');
+  await fetch(asset.signedUploadUrl, {
+    method: 'PUT',
+    body: data,
+    headers: {
+      'Content-Length': data.length.toString(),
+      'Content-Type': 'application/octet-stream',
+    },
+  });
+}
+```
+
+## Install at boot via `initialAssets`
+
+The fastest path for "I want this app on the simulator the moment it's ready" is `initialAssets` on the instance spec. The asset is installed (and optionally launched) before the instance reports `ready`.
+
+For iOS:
+
+```ts TypeScript
+const instance = await lim.iosInstances.create({
+  wait: true,
+  spec: {
+    initialAssets: [
+      {
+        kind: 'App',
+        source: 'AssetName',
+        assetName: 'my-app-v1.2.3.tar.gz',
+        launchMode: 'ForegroundIfRunning',   // optional; omit to install but not launch
+      },
+    ],
+  },
+});
+```
+
+For Android, the same shape works for a single asset. To install multiple APKs in one boot, use `source: 'AssetNames'` and pass an array:
+
+```ts TypeScript
+// Single APK
+const instance = await lim.androidInstances.create({
+  wait: true,
+  spec: {
+    initialAssets: [
+      { kind: 'App', source: 'AssetName', assetName: 'my-app-v1.2.3.apk' },
+    ],
+  },
+});
+
+// Multiple APKs in one boot
+const multi = await lim.androidInstances.create({
+  wait: true,
+  spec: {
+    initialAssets: [
+      {
+        kind: 'App',
+        source: 'AssetNames',
+        assetNames: ['feature-a.apk', 'feature-b.apk'],
+      },
+    ],
+  },
+});
+```
+
+### `initialAsset` shape
+
+iOS (`IosInstanceCreateParams.Spec.InitialAsset`):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | `'App'` | iOS only supports App assets at boot. |
+| `source` | `'URL' \| 'AssetName' \| 'AssetID'` | How to resolve the asset. |
+| `url` / `assetName` / `assetId` | string | The corresponding identifier. |
+| `launchMode` | `'ForegroundIfRunning' \| 'RelaunchIfRunning'` | Launch behavior post-install. Omit to install but not launch. |
+
+Android (`AndroidInstanceCreateParams.Spec.InitialAsset`) also accepts `URLs`, `AssetNames`, `AssetIDs` for multi-install, plus `kind: 'Configuration'` for configuration assets.
+
+## Install on-demand
+
+Already booted, and you want to install a new build into the running instance? Both platforms support it. The iOS client uses `installApp(url, options)` and benefits from MD5 caching; Android uses `sendAsset(url)` and downloads server-side.
+
+<CodeGroup>
+```ts TypeScript
+// iOS: installApp accepts a URL the simulator can reach (signedDownloadUrl works)
+await ios.installApp(asset.signedDownloadUrl, {
+  md5: asset.md5,                                         // enables server-side caching
+  launchMode: 'ForegroundIfRunning',
+});
+
+// Android: sendAsset triggers a server-side download + install
+await android.sendAsset(asset.signedDownloadUrl);
+```
+
+```go Go
+// iOS only. InstallApp is on the Go WebSocket client.
+// Android sendAsset is TypeScript-only today; use `lim android install-app`
+// or push the APK via the ADB tunnel from Go.
+_, err := iosClient.InstallApp(ctx, asset.SignedDownloadUrl, &iosws.AppInstallationOptions{
+    MD5:        asset.MD5,
+    LaunchMode: "ForegroundIfRunning",
+})
+```
+
+```bash CLI
+lim ios install-app ./MyApp.app.tar.gz
+lim ios install-app https://...           # remote URL
+lim android install-app ./MyApp.apk
+lim android install-app https://...
+```
+</CodeGroup>
+
+The CLI's `install-app` path uploads the local file to Asset Storage first, then triggers the install. That collapses the two steps into one command: a local `.app.tar.gz` lands on a remote instance with a single `lim ios install-app ./file.app.tar.gz`.
+
+## List, get, delete
+
+<CodeGroup>
+```ts TypeScript
+const assets = await lim.assets.list({
+  limit: 50,
+  nameFilter: 'my-app-v1.2.3.tar.gz',         // exact match
+  // namePrefixFilter: 'my-app-',              // alternative; LIKE wildcards treated as literals
+  includeDownloadUrl: true,
+  includeUploadUrl: false,
+  includeAppStore: false,
+});
+
+const single = await lim.assets.get(assetId, { includeDownloadUrl: true });
+
+await lim.assets.delete(assetId);
+```
+
+```python Python
+assets = client.assets.list(
+    limit=50,
+    name_filter="my-app-v1.2.3.tar.gz",
+    include_download_url=True,
+)
+
+single = client.assets.get(asset_id, include_download_url=True)
+
+client.assets.delete(asset_id)
+```
+
+```go Go
+assets, err := lim.Assets.List(ctx, limrun.AssetListParams{
+    Limit:              limrun.Int(50),
+    NameFilter:         limrun.String("my-app-v1.2.3.tar.gz"),
+    IncludeDownloadURL: limrun.Bool(true),
+})
+
+single, err := lim.Assets.Get(ctx, assetID, limrun.AssetGetParams{
+    IncludeDownloadURL: limrun.Bool(true),
+})
+
+err = lim.Assets.Delete(ctx, assetID)
+```
+
+```java Java
+List<Asset> assets = client.assets().list(
+    AssetListParams.builder()
+        .limit(50L)
+        .nameFilter("my-app-v1.2.3.tar.gz")
+        .includeDownloadUrl(true)
+        .build()
+);
+
+Asset single = client.assets().get(
+    assetId,
+    AssetGetParams.builder().includeDownloadUrl(true).build()
+);
+
+client.assets().delete(assetId);
+```
+
+```bash CLI
+lim asset list
+lim asset list --name my-app-v1.2.3.tar.gz --download-url
+lim asset list <id> --download-url
+lim asset delete <id>
+```
+</CodeGroup>
+
+### Filter options
+
+| Filter | Use |
+|---|---|
+| `nameFilter` | Exact-match on `name`. Cannot combine with `namePrefixFilter`. |
+| `namePrefixFilter` | Prefix match. LIKE wildcards (`%`, `_`) in the value are treated as literal characters. Empty string is rejected with 400, so omit the param entirely instead. |
+| `includeDownloadUrl` / `includeUploadUrl` | Set to `true` to have signed URLs returned. Default is `false` (smaller response). |
+| `includeAppStore` | Include curated assets from the Limrun App Store. They're returned with an `appstore/` name prefix. |
+
+## Browse the Limrun App Store
+
+Limrun maintains a small curated set of pre-built apps, typically client apps for cross-platform frameworks where having a fresh build available without re-uploading is convenient. The same catalog is surfaced in the console's Playground Apps picker:
+
+<Frame>
+  <img src="/images/console/04-apps-picker.png" alt="Console Playground Apps picker showing Upload and App Store entries for Expo Go 55 and Expo Go 54" />
+</Frame>
+
+```ts
+const assets = await lim.assets.list({ includeAppStore: true, namePrefixFilter: 'appstore/' });
+// Examples:
+//   appstore/Expo-Go-54.0.6.tar.gz       (iOS, Expo Go 54)
+//   appstore/Expo-Go-55-iOS-latest.tar.gz (iOS, Expo Go 55)
+//   appstore/Expo-Go-54.0.6.apk          (Android, Expo Go 54)
+//   appstore/Expo-Go-55-latest.apk       (Android, Expo Go 55)
+```
+
+Install at boot the same way as your own assets:
+
+```ts
+spec: {
+  initialAssets: [{
+    kind: 'App',
+    source: 'AssetName',
+    assetName: 'appstore/Expo-Go-54.0.6.tar.gz',
+  }],
+}
+```
+
+The `appstore/` prefix is part of the name. List available App Store assets with `lim asset list --include-app-store --json`. When combined with `includeAppStore: true`, the API strips the prefix before querying, so `nameFilter: 'appstore/Expo-Go-54.0.6.tar.gz'` works as expected. A partial prefix like `nameFilter: 'appstor'` will not match anything in the App Store because the prefix is stripped before the comparison.
+
+## Configuration assets
+
+Some platform features need an instance-level configuration value, not a binary. Today this is used to enable Chrome's command-line on non-rooted Android for [Playwright testing](/testing/playwright):
+
+```ts
+spec: {
+  initialAssets: [
+    {
+      kind: 'Configuration',
+      configuration: {
+        kind: 'ChromeFlag',
+        chromeFlag: 'enable-command-line-on-non-rooted-devices@1',
+      },
+    },
+  ],
+}
+```
+
+## Scope assets by OS
+
+Assets can be limited to one platform:
+
+```ts
+const asset = await lim.assets.getOrCreate({ name: 'my-app.apk' });
+// asset.os will default to undefined (both platforms) unless set server-side
+```
+
+The `os` field is `'ios' \| 'android' \| undefined`. Server-side defaults and conventions determine when it's set; if you find an existing asset whose `os` is set to the wrong platform, recreate with the correct name.
+
+## Use cases
+
+- Install a fresh build into an existing simulator with `ios.installApp(url)`, `android.sendAsset(url)`, or `lim ios install-app`.
+- Ship a build to reviewers as a `console.limrun.com/preview?asset=<name>&platform=ios` link by uploading via `lim xcode build . --upload <name>`.
+- Boot an instance with your app pre-installed by setting `spec.initialAssets` with `kind: 'App'`.
+- Re-use the same app build across many sessions: upload once with `assets.getOrUpload`, then reference by `assetName` everywhere.
+- Distribute a signed real-device IPA from CI with `lim xcode build --sdk iphoneos --upload <name>` and fetch the returned `signedDownloadUrl`.
+- Test against a published Expo client without uploading anything by referencing `assetName: 'appstore/Expo-Go-54.0.6.tar.gz'` (54) or `appstore/Expo-Go-55-iOS-latest.tar.gz` (55).
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Build with remote Xcode" icon="hammer" href="/ios/build-with-xcode">
+    `lim xcode build --upload` is the canonical way to land an iOS build into Asset Storage.
+  </Card>
+  <Card title="Automatic PR Previews" icon="git-pull-request" href="/ios/pr-previews">
+    Wire the upload step into a GitHub workflow that posts a preview comment on every PR.
+  </Card>
+  <Card title="Embed the simulator" icon="monitor-play" href="/platform/embed-simulator">
+    Combine `initialAssets` with `<RemoteControl />` so the user sees the right app on first paint.
+  </Card>
+  <Card title="SDK Reference" icon="book-open" href="/reference">
+    `assets.list` / `getOrCreate` / `getOrUpload` parameters across TypeScript, Python, Go, Java.
+  </Card>
+</CardGroup>

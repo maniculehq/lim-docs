@@ -1,320 +1,650 @@
 ---
 title: "Run an iOS Simulator"
-description: "Provision a remote iOS simulator, control it from your code, and tear it down when you're done."
+description: "Direct device control: taps, typing, scrolling, the element tree, recordings, app lifecycle, and connection management."
 ---
 
-A Limrun iOS instance is a fully booted iPhone, iPad, or Watch simulator running in a cloud pod. You create it with one REST call, drive it from the SDK over a control WebSocket (taps, scrolls, typing, element-tree queries, recordings, low-level `simctl`), and delete it when the session ends. The control surface is identical whether your code runs on a Mac, a Linux CI box, a Windows laptop, or inside a coding-agent sandbox.
+This page covers everything you can do to a running iOS simulator instance once it's created and `ready`. For provisioning, see the [Quickstart](/quickstart). For builds, see [Build with remote Xcode](/ios/build-with-xcode).
 
-By the end of this guide you'll be creating an iOS simulator, controlling it from your code, and tearing it down cleanly.
+## Configure the instance
 
-<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
-```text wrap
-You are helping a developer drive a Limrun cloud iOS simulator from code.
-
-Read the docs in this order:
-1. /ios/run-simulator.md for the instance lifecycle, the `Ios.createInstanceClient` control surface, and every method below.
-2. /quickstart.md if the developer hasn't installed the CLI or set `LIM_API_KEY` yet.
-3. /ios/build-with-xcode.md when they need to compile their own app rather than install a prebuilt one.
-
-The canonical TypeScript flow is:
-1. `import { Ios, Limrun } from '@limrun/api'`.
-2. Create with `await lim.iosInstances.create({ wait: true, reuseIfExists: true, metadata: { labels: { ... } }, spec: { model: 'iphone' } })`. `wait: true` blocks until `status.state === 'ready'`.
-3. Open the control client with `await Ios.createInstanceClient({ apiUrl: instance.status.apiUrl, token: instance.status.token })`. Do not use a non-existent `iosInstances.createClient`.
-4. Drive the simulator. Prefer `client.elementTree()` and `client.tapElement({ AXLabel: '...' })` or `{ AXUniqueId: '...' }` over coordinates. Use `AXLabel`, not `label`.
-5. For multi-step interactions use `client.performActions([...])`. Hardware buttons (home, lock, side, applePay, softwareKeyboard) require paired `buttonDown`/`buttonUp` actions.
-6. `client.disconnect()` and `await lim.iosInstances.delete(instance.metadata.id)` in `finally`.
-
-Never try to run a local iOS simulator or call local `xcodebuild`. On the instance itself, `xcodebuild` accepts only `-version` and `xcrun` accepts only `--sdk` / `--show-sdk-*-version`. For real builds, provision an Xcode sandbox via `spec.sandbox.xcode.enabled` or a standalone XcodeInstance (see /ios/build-with-xcode.md).
-```
-</Accordion>
-
-## Prerequisites
-
-- **A Limrun API key.** Set `LIM_API_KEY` in your environment or `.env` file. See [Quickstart](/quickstart) if you haven't yet.
-- **An SDK or the CLI.** Install one (or both):
-
-  <CodeGroup>
-    ```bash TypeScript
-    npm install @limrun/api
-    ```
-
-    ```bash lim CLI
-    npm install --global @limrun/cli
-    ```
-  </CodeGroup>
-
-## 1. Provision an iOS instance
-
-The iOS Instance API takes `{ wait, reuseIfExists, metadata, spec }` and returns `{ metadata, spec, status }` including `apiUrl`, `token`, `signedStreamUrl`, and `mcpUrl`.
+The shape of an iOS instance is set at creation time on `spec`:
 
 <CodeGroup>
-```bash cURL
-curl -X POST "https://api.limrun.com/v1/ios_instances?wait=true" \
-  -H "Authorization: Bearer $LIM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{ "spec": { "model": "iphone" } }'
-```
-
 ```ts TypeScript
-import { Limrun } from '@limrun/api';
-
-const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
-
 const instance = await lim.iosInstances.create({
   wait: true,
-  spec: { model: 'iphone' },
-});
-```
-
-```bash lim CLI
-lim ios create --model iphone
-```
-</CodeGroup>
-
-With `wait: true` the call blocks until the simulator boots and the control endpoints are populated. Cold-start latency is typically a few seconds; reused instances return almost immediately. Without `wait`, you get back a `creating` instance and must poll `lim.iosInstances.get(id)` until `status.state === 'ready'`.
-
-### Configure the spec
-
-Tune the create call through `spec` (body) and a couple of query params:
-
-| Field | Type | Default | What it does |
-|---|---|---|---|
-| `wait` | `boolean` (query) | `false` | Block until the simulator is `ready`. |
-| `reuseIfExists` | `boolean` (query) | `false` | If another instance with the same labels and region exists, return that one instead of creating a new one. |
-| `spec.model` | `'iphone' \| 'ipad' \| 'watch'` | `iphone` | Which simulator family to boot. |
-| `spec.region` | `string` | scheduler-picked | Pin the pod to a region. Combine with `clues` for latency-aware scheduling. |
-| `spec.inactivityTimeout` | `string` | `3m` | When to auto-terminate after the last control activity. `1m`, `10m`, `3h`. `0` falls back to your org default. |
-| `spec.hardTimeout` | `string` | `0` | Absolute upper bound on instance lifetime. `0` means no hard limit (capped by org policy). |
-| `spec.clues` | `Array<Clue>` | `[]` | Scheduling hints. Today only `{ kind: 'ClientIP', clientIp }` is defined; the scheduler uses it to place the pod near an end user. |
-| `spec.initialAssets` | `Array<InitialAsset>` | `[]` | Apps to pre-install before the instance reaches `ready`. iOS only supports `kind: 'App'`. |
-| `spec.sandbox.xcode.enabled` | `boolean` | `false` | Provision an embedded Xcode pod next to the simulator. Pair with [Build with Remote Xcode](/ios/build-with-xcode). |
-| `metadata.displayName` | `string` | unset | Shown in console listings. |
-| `metadata.labels` | `{ [key]: string }` | unset | Free-form key=value pairs. Used by `reuseIfExists` and `labelSelector` filters. |
-
-### Pre-install apps at boot
-
-`spec.initialAssets` runs before the instance reaches `ready`, so the app is already on disk (and optionally launched) by the time your code connects.
-
-```ts TypeScript expandable
-const instance = await lim.iosInstances.create({
-  wait: true,
+  reuseIfExists: true,
+  metadata: {
+    labels: { app: 'my-app', session: 'demo' },
+  },
   spec: {
+    model: 'iphone',                    // 'iphone' | 'ipad' | 'watch'
+    region: 'eu-north1',
+    inactivityTimeout: '10m',           // '1m' | '10m' | '3h' | ...
+    hardTimeout: '0',                   // '0' = no hard cap
+    clues: [{ kind: 'ClientIP', clientIp: '203.0.113.42' }],
     initialAssets: [
-      {
-        kind: 'App',
-        source: 'AssetName',
-        assetName: 'sample-native-app',
-        launchMode: 'ForegroundIfRunning',
-      },
+      { kind: 'App', source: 'AssetName', assetName: 'appstore/Expo-Go-54.0.6.tar.gz', launchMode: 'ForegroundIfRunning' },
     ],
+    sandbox: { xcode: { enabled: true } },
   },
 });
 ```
 
-`source` selects how the asset is resolved: `'AssetName'` and `'AssetID'` pull from Limrun Asset Storage, `'URL'` downloads from any HTTPS URL. Pick exactly one matching field (`assetName`, `assetId`, or `url`). `launchMode` only fires on the first install. iOS does not support `kind: 'Configuration'`; that's an Android-only asset kind.
-
-### What you get back
-
-The returned `IosInstance.status` carries the URLs you'll use to connect:
-
-| Field | Populated when | What it's for |
-|---|---|---|
-| `status.state` | always | Lifecycle: `unknown`, `creating`, `assigned`, `ready`, `terminated`. |
-| `status.token` | always | Bearer token for every URL below. Embedded into `signedStreamUrl` and `mcpUrl`. |
-| `status.apiUrl` | `ready` | Base URL for HTTP control plus the source from which the SDK derives the signaling WebSocket. Passed to `Ios.createInstanceClient`. |
-| `status.endpointWebSocketUrl` | `ready` | The raw signaling WebSocket. The SDK derives this from `apiUrl` automatically (`${apiUrl}/signaling?token=...`), so you only wire it up directly if you're building a non-SDK client. |
-| `status.signedStreamUrl` | `ready` | Token-baked stream URL safe to hand to a browser. Feeds `<RemoteControl url={...} />`. No API key required to view. |
-| `status.mcpUrl` | `ready` | Per-instance Model Context Protocol server. Wire into Claude Desktop, Cursor, Codex Web, or a custom MCP client. Token is embedded. |
-| `status.targetHttpPortUrlPrefix` | `ready` | URL prefix where appending a port (for example `8100`) tunnels to that port on the simulator. Used for WebDriverAgent over HTTPS with Appium. |
-| `status.sandbox.xcode.url` | when `spec.sandbox.xcode.enabled` | URL for the attached Xcode pod. Passed to `xcodeInstances.createClient`. |
-| `status.errorMessage` | on failure | Reason the instance is `terminated` or stuck. |
-
-URLs are scoped to instance lifetime. Once the instance terminates, recording download links and stream URLs return 404.
-
-## 2. Connect a device-control client
-
-The control client lives at `Ios.createInstanceClient` (not on the `iosInstances` resource). It opens a WebSocket to the instance (the *signaling channel*; it's the duplex transport for every method below), fetches `deviceInfo`, and resolves to a typed handle with every device-driving method on it.
-
-<Note>
-The iOS client is a namespace function (`Ios.createInstanceClient`) while the Xcode client is an instance method (`lim.xcodeInstances.createClient`). The asymmetry is intentional but easy to trip on: when you try `lim.iosInstances.createClient(...)` it'll be `undefined`. See [Build with Remote Xcode](/ios/build-with-xcode) for the Xcode variant.
-</Note>
-
-```ts TypeScript
-import { Ios, Limrun } from '@limrun/api';
-
-const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
-
-const instance = await lim.iosInstances.create({ wait: true });
-if (!instance.status.apiUrl) throw new Error('API URL is missing');
-
-const client = await Ios.createInstanceClient({
-  apiUrl: instance.status.apiUrl,
-  token: instance.status.token,
-});
+```python Python
+instance = client.ios_instances.create(
+    wait=True,
+    reuse_if_exists=True,
+    metadata={"labels": {"app": "my-app", "session": "demo"}},
+    spec={
+        "model": "iphone",                # "iphone" | "ipad" | "watch"
+        "region": "eu-north1",
+        "inactivity_timeout": "10m",
+        "hard_timeout": "0",
+        "clues": [{"kind": "ClientIP", "client_ip": "203.0.113.42"}],
+        "initial_assets": [
+            {
+                "kind": "App",
+                "source": "AssetName",
+                "asset_name": "appstore/Expo-Go-54.0.6.tar.gz",
+                "launch_mode": "ForegroundIfRunning",
+            },
+        ],
+        "sandbox": {"xcode": {"enabled": True}},
+    },
+)
 ```
 
-The client caches `deviceInfo` at connect time, so `client.deviceInfo.screenWidth`, `screenHeight`, `udid`, and `model` are available synchronously after the await resolves. The SDK keeps the WebSocket warm with a 30s ping and auto-reconnects on transient drops; see step 4 for the connection knobs.
-
-Optional client knobs:
-
-```ts TypeScript
-const client = await Ios.createInstanceClient({
-  apiUrl: instance.status.apiUrl!,
-  token: instance.status.token,
-  logLevel: 'info',          // 'none' | 'error' | 'warn' | 'info' | 'debug'
-  maxReconnectAttempts: 6,
-  reconnectDelay: 1000,      // ms
-  maxReconnectDelay: 30000,  // ms
-});
+```go Go
+instance, err := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
+    Wait:          limrun.Bool(true),
+    ReuseIfExists: limrun.Bool(true),
+    Metadata: limrun.IosInstanceNewParamsMetadata{
+        Labels: map[string]string{"app": "my-app", "session": "demo"},
+    },
+    Spec: limrun.IosInstanceNewParamsSpec{
+        Model:             limrun.IosInstanceNewParamsSpecModelIphone,
+        Region:            limrun.String("eu-north1"),
+        InactivityTimeout: limrun.String("10m"),
+        HardTimeout:       limrun.String("0"),
+        Sandbox: limrun.IosInstanceNewParamsSpecSandbox{
+            Xcode: limrun.IosInstanceNewParamsSpecSandboxXcode{
+                Enabled: limrun.Bool(true),
+            },
+        },
+    },
+})
 ```
 
-The CLI hides this connection behind every `lim ios ...` command. Each invocation opens a short-lived control client to the most recently created instance (override with `--id <instance-id>`), runs the action, and disconnects.
+```java Java
+import com.limrun.api.client.LimrunClient;
+import com.limrun.api.client.okhttp.LimrunOkHttpClient;
+import com.limrun.api.models.iosinstances.IosInstance;
+import com.limrun.api.models.iosinstances.IosInstanceCreateParams;
 
-## 3. Control the iOS instance
+LimrunClient client = LimrunOkHttpClient.fromEnv();
 
-With a connected `client` in hand, you've got everything you need to drive the simulator from code. The control surface covers six concerns:
-
-| Capability | What it covers |
-|---|---|
-| Manage apps | Install, launch, terminate, list, and soft-reset apps on the simulator. |
-| Read the screen | Pull the element tree, take screenshots, record server-side video. |
-| Drive input | Tap, type, press keys, scroll, set orientation, increment / decrement elements. |
-| Run batch actions | Send a sequence of actions in one call (custom gestures, agent turns). |
-| Stream logs | Tail app logs, watch syslog, drain on-demand. |
-| Run low-level shell commands | Drop to `simctl`, `xcrun`, `cp`, `lsof` for anything outside the typed API. |
-
-See [Control an iOS Instance](/ios/control-instance) for the full method reference and runnable snippets.
-
-## 4. Manage the connection
-
-`Ios.createInstanceClient` opens a signaling WebSocket at `${apiUrl.replace('https', 'wss')}/signaling?token=...` and fetches `deviceInfo` before resolving. After that, it keeps itself alive transparently: a 30s WebSocket ping, and exponential-backoff reconnect on transient drops.
-
-```ts TypeScript
-client.getConnectionState();
-// → 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
-
-const unsubscribe = client.onConnectionStateChange((state) => {
-  if (state === 'reconnecting') console.log('reconnecting...');
-  if (state === 'disconnected') console.log('dead');
-});
-// later:
-unsubscribe();
-
-client.disconnect();  // closes the control WS and stops reconnect attempts
+IosInstance instance = client.iosInstances().create(
+    IosInstanceCreateParams.builder()
+        .wait(true)
+        .reuseIfExists(true)
+        .metadata(IosInstanceCreateParams.Metadata.builder()
+            .labels(IosInstanceCreateParams.Metadata.Labels.builder()
+                .putAdditionalProperty("app", "my-app")
+                .putAdditionalProperty("session", "demo")
+                .build())
+            .build())
+        .spec(IosInstanceCreateParams.Spec.builder()
+            .model(IosInstanceCreateParams.Spec.Model.IPHONE)
+            .region("eu-north1")
+            .inactivityTimeout("10m")
+            .hardTimeout("0")
+            .build())
+        .build()
+);
 ```
 
-For sticky sessions (an interactive web UI, a long agent loop), call `client.keepAlive()` on a cadence. It sends an application-level keepAlive message that resets the instance's `inactivityTimeout` counter, separate from the protocol-level ping. Every 10 to 30 seconds is a reasonable cadence.
-
-```ts TypeScript
-setInterval(() => client.keepAlive(), 15_000);
-```
-
-When you don't keep the session sticky, the instance auto-terminates after `spec.inactivityTimeout` (default `3m`) since the last control activity.
-
-## 5. Reuse and reap with labels
-
-`metadata.labels` is free-form `{ key: string }`. Combine with `reuseIfExists` to make sessions sticky per user, per repo, or per PR, and with `labelSelector` to filter listings and reap stale instances.
-
-```ts TypeScript expandable
-// One instance per tenant, reused across reruns.
-const instance = await lim.iosInstances.create({
-  wait: true,
-  reuseIfExists: true,
-  metadata: { labels: { tenant: 'acme', purpose: 'preview' } },
-  spec: { model: 'iphone' },
-});
-
-// Reap every preview instance for a tenant.
-const stale = await lim.iosInstances.list({ labelSelector: 'tenant=acme,purpose=preview' });
-for await (const i of stale) {
-  await lim.iosInstances.delete(i.metadata.id);
-}
-```
-
-`reuseIfExists` matches on labels and region together; pin `spec.region` if you want strict reuse across regions. The `labelSelector` format is a comma-separated `key=value` string.
-
-## 6. Tear down
-
-Always disconnect the client and delete the instance when you're done. The `finally` block is the canonical place:
-
-<CodeGroup>
-```ts TypeScript
-try {
-  // ... drive the simulator ...
-} finally {
-  client.disconnect();
-  await lim.iosInstances.delete(instance.metadata.id);
-}
-```
-
-```bash lim CLI
-lim ios delete
+```bash CLI
+lim ios create --reuse-if-exists \
+  --model iphone \
+  --region eu-north1 \
+  --inactivity-timeout 10m \
+  --label app=my-app --label session=demo \
+  --install-asset appstore/Expo-Go-54.0.6.tar.gz \
+  --xcode
 ```
 </CodeGroup>
 
-`lim ios delete` without an ID removes the last instance the CLI created in the current directory, which is what you want inside an agent's working tree. The `--rm` flag on `lim ios create` arranges for an automatic delete when the CLI process exits.
+### `spec` reference
 
-## End-to-end example
+| Field | Type | Meaning |
+|---|---|---|
+| `model` | `'iphone' \| 'ipad' \| 'watch'` | Apple Simulator model. Defaults to `iphone`. `ipad` and `watch` are currently in alpha (the console picker labels them as such); use `iphone` for production workloads. |
+| `region` | string | Pin region (e.g. `eu-north1`). Otherwise scheduled by clues + availability. |
+| `inactivityTimeout` | duration string | `1m`, `10m`, `3h`. Default `3m`. `0` uses your org's default. |
+| `hardTimeout` | duration string | Forced termination. Default `0` = no hard cap. |
+| `clues` | array | Scheduling hints. `{ kind: 'ClientIP', clientIp }` picks a region close to the end user. |
+| `initialAssets` | array | Apps to install at boot. See [Asset Storage](/platform/asset-storage). |
+| `sandbox.xcode.enabled` | boolean | Attach an Xcode build sandbox. See [Build with remote Xcode](/ios/build-with-xcode). |
 
-The full happy path from `LIM_API_KEY` to a torn-down simulator, including the cleanup pattern:
+`metadata.labels` is free-form `key=value` and powers `reuseIfExists`, listing, and cleanup queries.
 
-```ts TypeScript expandable
-import { Ios, Limrun } from '@limrun/api';
+<Frame>
+  <img src="/images/console/03-ios-models.png" alt="Console Playground iOS model picker showing iPhone (stable), iPad (alpha), and Apple Watch (alpha)" />
+</Frame>
 
-const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
+## Connect a control client
 
+Once the instance is `ready`, control it via the WebSocket data plane. The TypeScript SDK has the full surface; the Go SDK exposes a substantial subset (screenshot, element-tree, tap, tap-element, typeText, pressKey, launchApp, listApps, openUrl, installApp, lsof, setOrientation, simctl streaming, plus element helpers). Python and Java only ship the control plane; reach for the CLI or raw REST for device control in those languages. See [SDK capability matrix](/reference#sdk-capability-matrix) for the full breakdown.
+
+<CodeGroup>
+```ts TypeScript
+import { Ios } from '@limrun/api';
+
+const client = await Ios.createInstanceClient({
+  apiUrl: instance.status.apiUrl!,
+  token: instance.status.token,
+  logLevel: 'info',         // 'none' | 'error' | 'warn' | 'info' | 'debug'
+});
+
+console.log('UDID:', client.deviceInfo.udid);
+console.log('Screen:', client.deviceInfo.screenWidth, client.deviceInfo.screenHeight);
+```
+
+```go Go
+import (
+    "context"
+    limrun "github.com/limrun-inc/go-sdk"
+    "github.com/limrun-inc/go-sdk/option"
+    iosws "github.com/limrun-inc/go-sdk/websocket/ios"
+)
+
+lim := limrun.NewClient(option.WithAPIKey(os.Getenv("LIM_API_KEY")))
+inst, _ := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
+    Wait:          limrun.Bool(true),
+    ReuseIfExists: limrun.Bool(true),
+})
+
+client, err := iosws.NewClient(inst.Status.APIURL, inst.Status.Token)
+if err != nil { panic(err) }
+defer client.Close()
+```
+
+```bash CLI
+# The CLI maintains its own connection per command. No explicit client step.
+# Persistent sessions reduce per-command latency:
+lim session start
+```
+</CodeGroup>
+
+`createInstanceClient` (TypeScript) resolves once the WebSocket has connected and the initial device-info fetch has succeeded. After that, `client.deviceInfo` is populated synchronously with `udid`, `screenWidth`, `screenHeight`, `model`. The Go `iosws.NewClient` returns the client immediately and does its own lazy connection setup; first call blocks until the WebSocket is up.
+
+### Where the URLs come from
+
+`instance.status` exposes everything you need:
+
+| Status field | Use |
+|---|---|
+| `apiUrl` | HTTP base for the device daemon. Pass to the control client. |
+| `token` | Per-instance bearer for `apiUrl`, `endpointWebSocketUrl`, and `sandbox.xcode.url`. Embedded in `signedStreamUrl`. |
+| `endpointWebSocketUrl` | WebSocket endpoint for `<RemoteControl />` (pass with `?token=`). |
+| `signedStreamUrl` | Console-hosted watch URL with token embedded; open in a browser without your API key. |
+| `mcpUrl` | Per-instance MCP HTTP endpoint. Auth with your org API key, not `status.token`. See [MCP](/agents/mcp). |
+| `sandbox.xcode.url` | Xcode sandbox API URL (only when `spec.sandbox.xcode.enabled: true`). |
+| `targetHttpPortUrlPrefix` | Reverse-proxy prefix for tunneled HTTP ports on the device. |
+| `state` | `unknown` → `creating` → `assigned` → `ready` → `terminated`. |
+
+## Read state
+
+The element tree is the source of truth for everything the user can see and interact with. Reach for it before every action.
+
+<CodeGroup>
+```ts TypeScript
+const tree = await client.elementTree();
+// tree: ElementTreeNode[] (recursive accessibility hierarchy)
+// fields per node: AXLabel, AXUniqueId, AXValue, role, type, title, traits, frame, children
+```
+
+```go Go
+// Returns raw JSON; parse with encoding/json or feed it to your own AST.
+treeJSON, err := client.ElementTree(ctx, nil)
+```
+
+```bash CLI
+lim ios element-tree
+lim ios element-tree --json | jq '.[] | select(.AXLabel == "Continue")'
+```
+</CodeGroup>
+
+For visual-only checks:
+
+<CodeGroup>
+```ts TypeScript
+const shot = await client.screenshot();
+// { base64: string, width: number, height: number }
+```
+
+```go Go
+shot, err := client.Screenshot(ctx)
+// shot.Base64, shot.Width, shot.Height
+```
+
+```bash CLI
+lim ios screenshot ./out.png
+```
+</CodeGroup>
+
+Screenshot dimensions are in *points*, the same coordinate space as `tap(x, y)`. If you want to tap based on a coordinate in a screenshot's pixel space (e.g. when the screenshot was scaled), use `tapWithScreenSize`:
+
+```ts
+await client.tapWithScreenSize(x, y, screenshotWidth, screenshotHeight);
+```
+
+## Tap
+
+Prefer accessibility selectors. They survive layout changes; coordinates don't.
+
+<CodeGroup>
+```ts TypeScript
+// By accessibility identifier (most stable)
+await client.tapElement({ AXUniqueId: 'startButton' });
+
+// By label
+await client.tapElement({ AXLabel: 'Save' });
+
+// By label contains (case-insensitive)
+await client.tapElement({ AXLabelContains: 'continue' });
+
+// By type + label
+await client.tapElement({ type: 'Button', AXLabel: 'Done' });
+
+// By coordinates (last resort)
+await client.tap(201, 450);
+```
+
+```go Go
+// Selector field names differ slightly from TypeScript:
+//   AccessibilityID, Label, LabelContains, ElementType, Title, TitleContains, Value
+_, err := client.TapElement(ctx, iosws.AccessibilitySelector{
+    AccessibilityID: "startButton",
+})
+_, err = client.TapElement(ctx, iosws.AccessibilitySelector{
+    Label: "Save",
+})
+_, err = client.TapElement(ctx, iosws.AccessibilitySelector{
+    ElementType: "Button",
+    Label:       "Done",
+})
+err = client.Tap(ctx, 201, 450)
+```
+
+```bash CLI
+lim ios tap-element --ax-unique-id startButton
+lim ios tap-element --ax-label "Save"
+lim ios tap-element --ax-label-contains continue
+lim ios tap-element --type Button --ax-label "Done"
+lim ios tap 201 450
+```
+</CodeGroup>
+
+`AccessibilitySelector` accepts: `AXUniqueId`, `AXLabel`, `AXLabelContains`, `type`, `title`, `titleContains`, `AXValue` (TypeScript field names; Go uses `AccessibilityID`, `Label`, `LabelContains`, `ElementType`, `Title`, `TitleContains`, `Value` for the same fields). All non-empty fields must match (AND, not OR).
+
+### Stepper and slider controls
+
+```ts
+await client.incrementElement({ AXLabel: 'Volume' });
+await client.decrementElement({ AXLabel: 'Volume' });
+await client.setElementValue('42', { AXLabel: 'Count' });   // faster than typing char-by-char
+```
+
+## Type and keys
+
+<CodeGroup>
+```ts TypeScript
+await client.typeText('hello world');                   // types into focused field
+await client.typeText('email@example.com', true);       // pressEnter = true
+await client.pressKey('enter');
+await client.pressKey('a', ['shift']);                   // modifiers: shift, ctrl, alt, meta
+await client.toggleKeyboard();                           // equivalent to ⌘K in Simulator
+```
+
+```go Go
+err := client.TypeText(ctx, "hello world", false)
+err = client.TypeText(ctx, "email@example.com", true) // pressEnter
+err = client.PressKey(ctx, "enter")
+err = client.PressKey(ctx, "a", "shift")
+// toggleKeyboard is TypeScript-only today.
+```
+
+```bash CLI
+lim ios type "hello world" --enter
+lim ios press-key enter --modifier shift
+lim ios toggle-keyboard
+```
+</CodeGroup>
+
+## Scroll
+
+```ts
+await client.scroll('down', 300);
+await client.scroll('up',   300, { coordinate: [200, 400], momentum: 0.4 });
+```
+
+`pixels` is the scroll distance in points. `coordinate` defaults to the screen center. `momentum` (0.0–1.0) controls fling decay.
+
+CLI:
+
+```bash
+lim ios scroll down --amount 300
+```
+
+## Open URLs and deep links
+
+```ts
+await client.openUrl('https://apple.com');               // opens in Safari
+await client.openUrl('myapp://orders/42');               // deep link into your app
+```
+
+```bash
+lim ios open-url "myapp://orders/42"
+```
+
+## Orientation
+
+```ts
+await client.setOrientation('Portrait');
+await client.setOrientation('Landscape');
+```
+
+## App lifecycle
+
+<CodeGroup>
+```ts TypeScript
+const apps = await client.listApps();
+// [{ bundleId, name, installType }, ...]
+
+await client.launchApp('com.example.MyApp');
+await client.launchApp('com.example.MyApp', 'RelaunchIfRunning');
+await client.terminateApp('com.example.MyApp');
+
+// Install from a URL (md5 enables server-side caching)
+await client.installApp('https://...build.zip', {
+  md5: '...',
+  timeoutMs: 120_000,
+  launchMode: 'ForegroundIfRunning',
+});
+```
+
+```go Go
+apps, err := client.ListApps(ctx)
+// []InstalledApp{ BundleID, Name, InstallType }
+
+err = client.LaunchApp(ctx, "com.example.MyApp")
+result, err := client.InstallApp(ctx, "https://...build.zip", &iosws.AppInstallationOptions{
+    MD5:        "...",
+    LaunchMode: "ForegroundIfRunning",
+})
+// terminate-app is TypeScript-only today; fall back to `lim ios terminate-app` or REST.
+```
+
+```bash CLI
+lim ios list-apps
+lim ios launch-app com.example.MyApp --mode RelaunchIfRunning
+lim ios terminate-app com.example.MyApp
+lim ios install-app ./MyApp.app
+lim ios install-app https://... --md5 abc... --launch-mode ForegroundIfRunning
+```
+</CodeGroup>
+
+### Soft-reset app state
+
+Wipes the app's data container and relaunches. Useful between test cases without redeploying.
+
+```ts
+await client.softReset('com.example.MyApp');                       // strategy: 'data' (default)
+await client.softReset('com.example.MyApp', { strategy: 'full' }); // also clears caches
+// returns: { strategy, bundleId, itemsCleared?, durationMs }
+```
+
+## Logs
+
+```ts
+// Tail last N lines (one-shot)
+const tail = await client.appLogTail('com.example.MyApp', 200);
+
+// Stream. Emits batched 'lines' events every ~500ms
+const stream = client.streamAppLog('com.example.MyApp');
+stream.on('line', (line) => console.log(line));
+stream.on('error', console.error);
+stream.on('close', () => console.log('stream closed'));
+// later:
+stream.stop();
+
+// System log
+const sys = client.streamSyslog();
+sys.on('line', (line) => console.log(line));
+```
+
+CLI:
+
+```bash
+lim ios app-log com.example.MyApp --tail 200
+lim ios app-log com.example.MyApp --follow
+lim ios syslog
+```
+
+## Batch actions
+
+When you need a sequence executed server-side without per-step round-trips, use `performActions`. The batch stops on the first failure and reports per-action results.
+
+```ts
+const result = await client.performActions(
+  [
+    { type: 'tapElement', selector: { AXLabel: 'Continue' } },
+    { type: 'wait', durationMs: 500 },
+    { type: 'typeText', text: 'hello', pressEnter: true },
+    { type: 'scroll', direction: 'down', pixels: 300 },
+    { type: 'pressKey', key: 'enter' },
+  ],
+  { timeoutMs: 10_000 },
+);
+// result.results is per-action
+```
+
+CLI:
+
+```bash
+lim ios perform \
+  --action 'type=tapElement,selector={"AXLabel":"Continue"}' \
+  --action type=wait,durationMs=500 \
+  --action "type=typeText,text=hello,pressEnter=true"
+```
+
+Action `type` values: `tap`, `tapElement`, `incrementElement`, `decrementElement`, `setElementValue`, `typeText`, `pressKey`, `scroll`, `toggleKeyboard`, `openUrl`, `setOrientation`, `wait`, `touchDown`, `touchMove`, `touchUp`, `keyDown`, `keyUp`, `buttonDown`, `buttonUp`. Hardware `button` values: `home`, `lock`, `side`, `applePay`, `softwareKeyboard`.
+
+## Low-level HID gestures
+
+For multi-touch and precise gesture timing, use the `touchDown` / `touchMove` / `touchUp` actions inside a `performActions` batch:
+
+```ts
+const cx = client.deviceInfo.screenWidth / 2;
+const startY = 600;
+const endY = 200;
+
+await client.performActions([
+  { type: 'touchDown', x: cx, y: startY },
+  { type: 'wait', durationMs: 30 },
+  { type: 'touchMove', x: cx, y: startY - 100 },
+  { type: 'touchMove', x: cx, y: startY - 200 },
+  { type: 'touchMove', x: cx, y: endY },
+  { type: 'touchUp',   x: cx, y: endY },
+]);
+```
+
+## Record video
+
+Recordings run server-side. `quality` is `5` (default) through `10`.
+
+```ts
+await client.startRecording({ quality: 5 });
+// ... drive the UI ...
+const downloadUrl = await client.stopRecording({ localPath: '/tmp/demo.mp4' });
+// or:
+await client.stopRecording({ presignedUrl: '<your-s3-upload-url>' });
+```
+
+CLI:
+
+```bash
+lim ios record start --quality 5
+# ... drive the UI ...
+lim ios record stop -o /tmp/demo.mp4
+# or upload directly:
+lim ios record stop --presigned-url "<url>"
+```
+
+## Run low-level commands
+
+The instance exposes a curated set of macOS dev tools so you can drop down when the high-level API doesn't cover something.
+
+<CodeGroup>
+```ts TypeScript
+// Streaming simctl
+const exec = client.simctl(['listapps', 'booted']);
+exec.on('line-stdout', (line) => console.log(line));
+exec.on('line-stderr', (line) => console.error(line));
+const { code } = await exec.wait();
+
+// One-shot xcrun (limited to --sdk / --show-* flags)
+const { stdout } = await client.xcrun(['--sdk', 'iphonesimulator', '--show-sdk-version']);
+
+// xcodebuild version only
+await client.xcodebuild(['-version']);
+
+// Upload a file to the simulator sandbox (returns the in-sandbox path)
+const remotePath = await client.cp('config.json', '/local/path/to/config.json');
+
+// Inspect open UNIX sockets
+const sockets = await client.lsof();
+```
+
+```go Go
+// simctl mirrors os/exec.Cmd; pipe to your own writers or buffer the output.
+cmd := client.Simctl(ctx, "listapps", "booted")
+cmd.Stdout = os.Stdout
+cmd.Stderr = os.Stderr
+if err := cmd.Run(); err != nil { panic(err) }
+
+// Inspect open UNIX sockets
+sockets, err := client.Lsof(ctx)
+
+// xcrun, xcodebuild, and cp are TypeScript-only today.
+```
+
+```bash CLI
+lim ios simctl -- listapps booted
+lim ios xcrun  -- --sdk iphonesimulator --show-sdk-version
+lim ios cp config.json /local/path/to/config.json
+lim ios lsof
+```
+</CodeGroup>
+
+## Reverse tunnel
+
+Expose a service running on your machine (or anywhere reachable from the SDK host) to the simulator. This is how local mediators like Detox reach the app inside the simulator.
+
+```ts
+const tunnel = await client.startReverseTunnel({
+  remotePort: 57090,           // must be in 57090..57099
+  localPort: 4000,             // defaults to remotePort
+  localHost: '127.0.0.1',
+});
+// The simulator can now reach this service at 127.0.0.1:57090
+// tunnel.close() to tear it down
+```
+
+CLI:
+
+```bash
+lim ios reverse 57090:4000             # expose local :4000 as simulator :57090
+lim ios reverse 57091 --local-host 0.0.0.0
+```
+
+The reverse-tunnel remote port range is **57090–57099**. Pick any port in that band; the runtime reserves the range for app-side reachable services.
+
+## Connection lifecycle
+
+```ts
+client.getConnectionState();
+// 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+
+const unsubscribe = client.onConnectionStateChange((state) => {
+  console.log('state →', state);
+});
+
+client.keepAlive();   // explicit ping (the client also auto-pings)
+client.disconnect();  // close cleanly, do not auto-reconnect
+```
+
+The SDK auto-reconnects on transient failures with exponential backoff (defaults: 6 attempts, 1s base, 30s cap). `disconnect()` is final; no further auto-reconnects after it.
+
+## Lifecycle and multi-tenancy
+
+Each iOS instance is a single-tenant device: one client should drive it at a time. Use labels to scope instances per user, per PR, or per session, and lean on `reuseIfExists` to keep return visits sticky.
+
+```ts
+// Reuse the same instance for the same session across multiple agent runs
 const instance = await lim.iosInstances.create({
   wait: true,
   reuseIfExists: true,
-  metadata: { labels: { name: 'my-agent-loop' } },
-  spec: { model: 'iphone' },
+  metadata: { labels: { session: sessionId, user: userId } },
 });
-if (!instance.status.apiUrl) throw new Error('API URL is missing');
+```
 
-const client = await Ios.createInstanceClient({
-  apiUrl: instance.status.apiUrl,
-  token: instance.status.token,
-});
+Tear down explicitly:
 
-try {
-  // 1. inspect
-  const tree = await client.elementTree();
-  console.log(`${tree.length} root nodes`);
+```ts
+await lim.iosInstances.delete(instance.metadata.id);
+```
 
-  // 2. drive
-  await client.openUrl('https://apple.com');
-  await client.tapElement({ AXLabel: 'Continue' });
-  await client.typeText('hello world', true);
+```bash
+lim ios delete <id>    # or `lim ios delete` for the last-created
+```
 
-  // 3. record a flow
-  await client.startRecording({ quality: 7 });
-  await client.performActions([
-    { type: 'tap', x: 100, y: 200 },
-    { type: 'wait', durationMs: 500 },
-    { type: 'typeText', text: 'demo', pressEnter: true },
-  ]);
-  await client.stopRecording({ localPath: 'demo.mp4' });
-} finally {
-  client.disconnect();
-  await lim.iosInstances.delete(instance.metadata.id);
+Or scope cleanup with a label selector:
+
+```ts
+const stale = await lim.iosInstances.list({ labelSelector: `user=${userId}`, state: 'ready' });
+for await (const inst of stale) {
+  await lim.iosInstances.delete(inst.metadata.id);
 }
 ```
 
-## Use cases
+The console's **Instances** tab is the human-friendly view of the same data. State filter, label selector, sort by duration / created-at, plus a one-click Playground re-attach for any ready instance:
 
-- **Cloud coding-agent loop.** Pull the element tree, decide, tap, re-snapshot. The primary Limrun workflow.
-- **Test in-app purchases without an Apple Account.** Pair with `spec.sandbox.xcode.enabled` and `setStoreKitConfig` / `discoverStoreKitConfig` against the local StoreKit test environment.
-- **Embed a live simulator in a customer-facing app.** Hand `signedStreamUrl` to `<RemoteControl />` and schedule near the end user with `clues: [{ kind: 'ClientIP', clientIp }]`.
-- **Record a marketing or QA demo.** `startRecording` plus `performActions` produces a clean MP4 with deterministic timing.
-- **Hold a sticky interactive session.** Call `client.keepAlive()` on a cadence and use `reuseIfExists` with per-user labels so the same simulator returns across reconnects.
+<Frame>
+  <img src="/images/console/10-instances.png" alt="Console Instances page showing one ready iOS instance with its ID, status, duration, and creation time" />
+</Frame>
+
+After a `delete` (or after the inactivity timeout fires), the row disappears from the **Ready** filter. Switching the filter to **All** shows the same instance in `terminated` state until it ages out:
+
+<Frame>
+  <img src="/images/console/14-instances-empty.png" alt="Console Instances page after deleting the ready instance, with no rows under the Ready filter" />
+</Frame>
 
 ## Next steps
 
 <CardGroup cols={2}>
-  <Card title="Build with Remote Xcode" icon="hammer" href="/ios/build-with-xcode">
-    Provision an Xcode sandbox, sync source, run `xcodebuild` remotely, and auto-install on the attached simulator.
+  <Card title="Build with remote Xcode" icon="hammer" href="/ios/build-with-xcode">
+    Produce the build that gets installed onto the simulator.
   </Card>
-  <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Three-minute setup: install the CLI, authenticate, and create your first instance with `lim ios create --xcode`.
+  <Card title="Automatic PR Previews" icon="git-pull-request" href="/ios/pr-previews">
+    Ship every PR with a built app and a live preview link, straight from a GitHub workflow.
+  </Card>
+  <Card title="Embed the simulator" icon="monitor-play" href="/platform/embed-simulator">
+    Render the simulator in your web app with `<RemoteControl />`.
+  </Card>
+  <Card title="Test in-app purchases" icon="credit-card" href="/ios/in-app-purchases">
+    StoreKit local testing without an Apple Account or sandbox tester (advanced).
   </Card>
 </CardGroup>

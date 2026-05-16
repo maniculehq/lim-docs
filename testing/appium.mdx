@@ -1,0 +1,247 @@
+---
+title: "Automated testing with Appium"
+description: "Run Appium tests against Limrun iOS simulators and Android emulators from a Linux CI runner, with no macOS host required."
+---
+
+Appium works against Limrun in two different shapes depending on the platform.
+
+| Platform | Shape | Why |
+|---|---|---|
+| **iOS** | Custom XCUITest driver fork (`@limrun/appium-xcuitest-driver`) | XCUITest needs to talk to `simctl` and the Web Inspector. Limrun's fork forwards those calls to the remote instance instead of looking for a local Mac. |
+| **Android** | Upstream Appium drivers, unchanged | Appium talks to Android over ADB. Once Limrun's [ADB tunnel](/android/run-emulator#adb-tunnel-the-main-door-in) is up, Appium auto-detects the remote emulator like any other device. |
+
+Both shapes can run from a Linux GitHub runner. No `runs-on: macos-latest`, no Mac host.
+
+## iOS: `@limrun/appium-xcuitest-driver`
+
+### Install
+
+Install Appium and the Limrun XCUITest driver:
+
+```bash
+npm install --global appium
+appium driver install --source npm @limrun/appium-xcuitest-driver
+```
+
+The driver registers as `@limrun/xcuitest` (not the upstream `XCUITest`), so both can coexist in one Appium install.
+
+### Create the instance with WebDriverAgent installed
+
+Appium uses [WebDriverAgent](https://github.com/appium/WebDriverAgent) (WDA) as the in-app test runner on iOS. Limrun's pattern is to install WDA as part of `initialAssets` at boot so the simulator is ready immediately:
+
+```ts
+import { Limrun, Ios } from '@limrun/api';
+
+const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
+
+const instance = await lim.iosInstances.create({
+  wait: true,
+  reuseIfExists: true,
+  metadata: { labels: { name: 'appium-ios' } },
+  spec: {
+    initialAssets: [
+      {
+        kind: 'App',
+        source: 'URL',
+        url: 'https://github.com/appium/WebDriverAgent/releases/download/v10.4.5/WebDriverAgentRunner-Build-Sim-arm64.zip',
+        launchMode: 'ForegroundIfRunning',
+      },
+    ],
+  },
+});
+```
+
+Pin a specific WDA build by version. Both `@limrun/appium-xcuitest-driver` and the WDA bundle move forward over time, and the version of WDA must match what the driver expects.
+
+### Open a control client and launch WDA
+
+You still need a Limrun device-control client to launch WDA via `simctl` and to derive the WDA URL Appium will connect to.
+
+```ts
+const lim_ios = await Ios.createInstanceClient({
+  apiUrl: instance.status.apiUrl!,
+  token: instance.status.token,
+});
+
+// Construct the WDA URL from the instance's HTTP-port prefix
+const wdaUrl =
+  instance.status.targetHttpPortUrlPrefix!.replace('limrun.net', 'limrun.net:443') + '8100';
+
+// Launch WDA on the simulator if it isn't running
+await lim_ios.simctl(['launch', 'booted', 'com.facebook.WebDriverAgentRunner.xctrunner']).wait();
+
+// We don't need the device-control client after that. Appium drives WDA directly.
+lim_ios.disconnect();
+```
+
+### Capabilities
+
+The Limrun-specific bits are `appium:limInstanceApiUrl`, `appium:limInstanceToken`, and the `automationName` change. Everything else is standard XCUITest.
+
+```ts
+import { remote } from 'webdriverio';
+
+const driver = await remote({
+  capabilities: {
+    platformName: 'iOS',
+    browserName: 'safari',                                 // or set 'appium:bundleId' for a native app
+    'appium:udid': lim_ios.deviceInfo.udid,
+    'appium:automationName': '@limrun/xcuitest',           // NOT 'XCUITest'
+    'appium:noReset': true,
+    'appium:fullReset': false,
+    'appium:webDriverAgentUrl': wdaUrl,
+    'appium:wdaLocalPort': 443,
+    'appium:useNewWDA': false,
+    'appium:usePreinstalledWDA': true,
+    'appium:limInstanceApiUrl': instance.status.apiUrl,
+    'appium:limInstanceToken': instance.status.token,
+    'appium:wdaRequestHeaders': {
+      Authorization: `Bearer ${instance.status.token}`,
+    },
+  },
+  hostname: '127.0.0.1',
+  port: 4723,
+  path: '/',
+  protocol: 'http',
+});
+```
+
+| Capability | Required | Purpose |
+|---|---|---|
+| `appium:automationName` | yes | Must be `@limrun/xcuitest`. |
+| `appium:udid` | yes | The simulator's UDID. From `lim_ios.deviceInfo.udid`. |
+| `appium:limInstanceApiUrl` | yes | Lets the driver fork run `simctl` against the remote instance. From `instance.status.apiUrl`. |
+| `appium:limInstanceToken` | yes | Auth for the above. From `instance.status.token`. |
+| `appium:webDriverAgentUrl` | yes | Where WDA is reachable (Limrun's tunneled HTTP port). |
+| `appium:wdaLocalPort` | yes | Typically `443` because Limrun's WDA URL is HTTPS. |
+| `appium:usePreinstalledWDA` | recommended | Set to `true`. WDA is already installed via `initialAssets`. |
+| `appium:wdaRequestHeaders` | recommended | Adds an `Authorization` header to every WDA request so the gateway accepts it. |
+
+### Run a Safari + native test
+
+The example below opens Safari, navigates to Hacker News, scrolls, clicks "More", and reads the page source. All standard WebdriverIO. The simulator stream URL (`instance.status.signedStreamUrl`) shows the action in any browser.
+
+```ts
+// In Safari
+await driver.executeScript('window.location.assign(arguments[0])', ['https://news.ycombinator.com/']);
+
+const contexts = await driver.getContexts();
+const webview = contexts.find((c) => String(c).includes('WEBVIEW'));
+await driver.switchContext(webview as string);
+
+await driver.execute('window.scrollTo(0, document.body.scrollHeight)');
+await driver.$('a.morelink').click();
+
+console.log(await driver.getPageSource());
+
+await driver.deleteSession();
+```
+
+## Android: upstream Appium, unchanged
+
+Android's path is conventional: upstream Appium plus the standard `uiautomator2` driver. Limrun's contribution is the [ADB tunnel](/android/run-emulator#adb-tunnel-the-main-door-in). Once it's up, Appium auto-detects the remote emulator like a local one.
+
+### Install
+
+```bash
+npm install --global appium
+appium driver install uiautomator2
+```
+
+### Start the tunnel before Appium
+
+```ts
+import { createInstanceClient, Limrun } from '@limrun/api';
+
+const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
+const instance = await lim.androidInstances.create({
+  wait: true,
+  reuseIfExists: true,
+});
+
+const client = await createInstanceClient({
+  apiUrl: instance.status.apiUrl!,
+  adbUrl: instance.status.adbWebSocketUrl!,
+  token: instance.status.token,
+});
+
+const tunnel = await client.startAdbTunnel();
+console.log(`adb device available at ${tunnel.address.address}:${tunnel.address.port}`);
+```
+
+`adb devices` will now list the emulator. Appium's `uiautomator2` driver picks it up by `udid` (the `host:port` from the tunnel).
+
+### Capabilities
+
+```ts
+const driver = await remote({
+  capabilities: {
+    platformName: 'Android',
+    'appium:automationName': 'UiAutomator2',
+    'appium:udid': `${tunnel.address.address}:${tunnel.address.port}`,
+    'appium:appPackage': 'com.example.MyApp',
+    'appium:appActivity': '.MainActivity',
+  },
+  hostname: '127.0.0.1',
+  port: 4723,
+});
+```
+
+Or pass an `appium:app` path to a `.apk` and Appium will install it through the tunnel.
+
+## CI: run it from Linux
+
+Both flows run from an `ubuntu-latest` runner. Sketch:
+
+```yaml .github/workflows/appium.yml
+name: Appium
+on: pull_request
+
+jobs:
+  ios:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: |
+          npm install --global appium @limrun/cli
+          appium driver install --source npm @limrun/appium-xcuitest-driver
+      - name: Run tests
+        env:
+          LIM_API_KEY: ${{ secrets.LIM_API_KEY }}
+        run: |
+          # Optional: start Appium in the background
+          appium --base-path / &
+          npm test
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+      - run: |
+          npm install --global appium @limrun/cli
+          appium driver install uiautomator2
+      - name: Run tests
+        env:
+          LIM_API_KEY: ${{ secrets.LIM_API_KEY }}
+        run: |
+          appium --base-path / &
+          npm test
+```
+
+You don't need anything beyond a working `adb` on the runner. The SDK and CLI take whichever `adbPath` you pass (default: `adb` in `$PATH`). Most Linux runners already have it via `android-tools`; the GitHub `ubuntu-latest` image does too.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Testing with Playwright" icon="globe" href="/testing/playwright">
+    Chrome automation on Android via the co-located CDP sandbox.
+  </Card>
+  <Card title="Run an Android Emulator" icon="tablet-smartphone" href="/android/run-emulator">
+    ADB tunnel details and the Android device-control surface.
+  </Card>
+  <Card title="Run an iOS Simulator" icon="smartphone" href="/ios/run-simulator">
+    Direct device control: taps, screenshots, recordings, app lifecycle.
+  </Card>
+</CardGroup>

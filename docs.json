@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
   "name": "Limrun",
-  "description": "Run Xcode and iOS, Android, and Linux sandboxes in the cloud, controllable from any language or coding agent.",
+  "description": "Run iOS simulators, Android emulators, and Xcode builds in the cloud, controllable from any language, CLI, or coding agent.",
   "colors": {
     "primary": "#26BD6C",
     "light": "#5BE093",
@@ -33,7 +33,16 @@
             "group": "Getting started",
             "icon": "rocket",
             "pages": [
+              "introduction",
               "quickstart"
+            ]
+          },
+          {
+            "group": "Quickstart for coding agents",
+            "icon": "bot",
+            "pages": [
+              "agents/cli",
+              "agents/mcp"
             ]
           },
           {
@@ -42,8 +51,59 @@
             "pages": [
               "ios/build-with-xcode",
               "ios/run-simulator",
-              "ios/control-instance"
+              "ios/pr-previews",
+              "ios/in-app-purchases"
             ]
+          },
+          {
+            "group": "Remote Android development",
+            "icon": "tablet-smartphone",
+            "pages": [
+              "android/run-emulator"
+            ]
+          },
+          {
+            "group": "Automated testing",
+            "icon": "flask-conical",
+            "pages": [
+              "testing/appium",
+              "testing/playwright"
+            ]
+          },
+          {
+            "group": "Platform integration",
+            "icon": "blocks",
+            "pages": [
+              "platform/embed-simulator",
+              "platform/asset-storage"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "book-open",
+            "pages": [
+              "reference"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Examples",
+        "anchors": [
+          {
+            "anchor": "iOS samples",
+            "icon": "smartphone",
+            "href": "https://github.com/limrun-inc/typescript-sdk/tree/main/examples"
+          },
+          {
+            "anchor": "Sample native app",
+            "icon": "github",
+            "href": "https://github.com/limrun-inc/sample-native-app"
+          },
+          {
+            "anchor": "Sample Flutter app",
+            "icon": "github",
+            "href": "https://github.com/limrun-inc/sample-flutter-app"
           }
         ]
       }

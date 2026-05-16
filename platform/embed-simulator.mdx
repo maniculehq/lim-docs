@@ -1,0 +1,257 @@
+---
+title: "Embed the simulator"
+description: "Render a live iOS or Android simulator inside your web app with `<RemoteControl />` from `@limrun/ui`. Backend provisions, browser streams over WebRTC."
+---
+
+`<RemoteControl />` is a React component that streams a Limrun instance into a `<div>` in your web app. It connects to the instance's WebSocket + WebRTC endpoints, displays the screen, forwards touch/keyboard input, and exposes imperative control via a ref (`openUrl`, `screenshot`, `terminateApp`, `sendKeyEvent`, `reconnect`).
+
+This is the path platform integrators take: companies building products where their users need a live mobile device on the page (coding-agent providers, mobile preview tools, internal QA platforms). Your server holds the API key; the browser only sees a per-instance bearer token.
+
+The end-user experience is a live device frame inside your page. The Limrun console's Playground uses the same component for its own streaming view, so what you ship to your users looks like this:
+
+<Frame>
+  <img src="/images/console/05-ios-stream-booting.png" alt="Live iOS simulator with the iOS home screen visible, rendered inside a device frame chrome. The same look-and-feel `<RemoteControl />` produces in your own app." />
+</Frame>
+
+## Architecture
+
+```
+  ┌─ Browser ────────────────────────┐    ┌─ Your backend ───────────────────┐
+  │                                  │    │                                  │
+  │  <RemoteControl                  │    │  POST /api/sessions/start ─┐     │
+  │    url={webrtcUrl}               │    │                            │     │
+  │    token={token}                 │    │  Limrun({ apiKey })        │     │
+  │    sessionId={sessionId}         │    │    .iosInstances.create(   │     │
+  │  />                              │    │      ...                   │     │
+  │                                  │    │    )                       │     │
+  │   ↑                              │    │                            ↓     │
+  │   │ url, token, sessionId        │    │  { id, webrtcUrl, token }        │
+  │   └──────────────────────────────┴────┘                                  │
+  │                                  │    └──────────────────────────────────┘
+  │   WebSocket + WebRTC             │                  ↓ provisioning
+  │   (token in query string)        │             Limrun control plane
+  └─────────────────────────────┬────┘
+                                │
+                                ▼
+                       Limrun instance
+                       (status.endpointWebSocketUrl)
+```
+
+The key principle: **API keys never reach the browser.** Your backend creates the instance with `Limrun({ apiKey })`, then hands the browser only `webrtcUrl` (the per-instance WebSocket endpoint) and `token` (the per-instance bearer). The token is scoped to one instance: it lets the browser drive that specific simulator and nothing else.
+
+## Backend: provision the instance
+
+A minimal Express endpoint that creates an iOS instance scoped to a web session:
+
+```ts backend/index.ts
+import express from 'express';
+import cors from 'cors';
+import { Limrun } from '@limrun/api';
+
+const app = express();
+app.use(cors(), express.json());
+
+const lim = new Limrun({ apiKey: process.env.LIM_API_KEY });
+
+app.post('/sessions/ios/start', async (req, res) => {
+  const { webSessionId, iosModel = 'iphone', clientIp } = req.body;
+
+  const instance = await lim.iosInstances.create({
+    wait: true,
+    reuseIfExists: true,
+    metadata: { labels: { webSessionId } },
+    spec: {
+      model: iosModel,                                      // 'iphone' | 'ipad' | 'watch'
+      ...(clientIp && { clues: [{ kind: 'ClientIP', clientIp }] }),
+      initialAssets: [
+        { kind: 'App', source: 'AssetName', assetName: 'appstore/Expo-Go-54.0.6.tar.gz' },
+      ],
+    },
+  });
+
+  res.json({
+    id: instance.metadata.id,
+    webrtcUrl: instance.status.endpointWebSocketUrl,
+    token: instance.status.token,
+  });
+});
+
+app.post('/sessions/ios/stop', async (req, res) => {
+  await lim.iosInstances.delete(req.body.id);
+  res.sendStatus(204);
+});
+
+app.listen(3001);
+```
+
+Android follows the same shape against `lim.androidInstances`. The `webSessionId` label is what lets you find and clean up a user's instance later.
+
+### Scheduling hints
+
+When the request reaches your backend, the original client IP is usually in `req.ip` (or `X-Forwarded-For` behind a proxy). Pass it as a `ClientIP` scheduling clue so Limrun picks a region close to the end user. Round-trip latency for the WebRTC stream is the single biggest UX lever for embedded simulators, and the region choice dominates it.
+
+### Tagging per tenant
+
+Use `metadata.labels` to scope instances per tenant, per session, per PR, or whatever maps to "who can reuse this instance." The same labels become the cleanup query at the end:
+
+```ts
+await lim.iosInstances.create({
+  metadata: {
+    labels: {
+      tenant: tenantId,
+      user: userId,
+      session: webSessionId,
+      managed_by: 'platform-embed',
+    },
+  },
+  // ...
+});
+```
+
+## Frontend: install and render
+
+Install the UI package:
+
+```bash
+npm install @limrun/ui
+```
+
+Render the component, passing the URL and token from your backend's response:
+
+```tsx frontend/App.tsx
+import { RemoteControl, type RemoteControlHandle } from '@limrun/ui';
+import { useEffect, useRef, useState } from 'react';
+
+type Session = { id: string; webrtcUrl: string; token: string };
+
+export function Simulator() {
+  const [session, setSession] = useState<Session | null>(null);
+  const ctrlRef = useRef<RemoteControlHandle>(null);
+
+  useEffect(() => {
+    fetch('/sessions/ios/start', { method: 'POST', body: JSON.stringify({ webSessionId: 's1' }) })
+      .then((r) => r.json())
+      .then(setSession);
+
+    return () => {
+      if (session?.id) {
+        fetch('/sessions/ios/stop', { method: 'POST', body: JSON.stringify({ id: session.id }) });
+      }
+    };
+  }, []);
+
+  if (!session) return <div>Booting simulator…</div>;
+
+  return (
+    <RemoteControl
+      ref={ctrlRef}
+      url={session.webrtcUrl}
+      token={session.token}
+      sessionId={`session-${Date.now()}`}
+      showFrame
+      openUrl="https://example.com"
+    />
+  );
+}
+```
+
+### Props
+
+| Prop | Type | Required | Use |
+|---|---|---|---|
+| `url` | string | yes | WebSocket URL of the instance. Pass `instance.status.endpointWebSocketUrl` from the backend. |
+| `token` | string | yes | Per-instance bearer. Pass `instance.status.token`. Appended to the connection URL as `?token=...`. |
+| `sessionId` | string | no | Unique session identifier. Prevents conflicts when multiple browser sessions exist for the same instance. Random if omitted. |
+| `openUrl` | string | no | URL to open on the device once the control channel opens. |
+| `showFrame` | boolean | no, default `true` | Render the device bezel around the video. |
+| `autoReconnect` | boolean | no, default `false` | After a connection drop on a working session, auto-reconnect instead of showing a Retry button. |
+| `className` | string | no | Extra class names applied on top of defaults. |
+
+### Imperative control via ref
+
+```tsx
+ctrlRef.current?.openUrl('myapp://orders/42');
+ctrlRef.current?.terminateApp('com.example.MyApp');
+const shot = await ctrlRef.current?.screenshot();         // { dataUri: string }
+ctrlRef.current?.sendKeyEvent({ type: 'keydown', code: 'Enter' });
+ctrlRef.current?.reconnect();
+```
+
+`RemoteControlHandle` methods:
+
+| Method | Returns | Use |
+|---|---|---|
+| `openUrl(url)` | void | Send a deeplink/URL to the device. |
+| `screenshot()` | `Promise<{ dataUri: string }>` | Capture the current screen. Times out after 30s. |
+| `terminateApp(bundleId)` | `Promise<void>` | Kill an app by bundle ID. Times out after 30s. |
+| `sendKeyEvent({ type, code, modifiers })` | void | Forward a keyboard event (`type`: `'keydown' \| 'keyup'`, `code`: e.g. `'KeyA'`, `'Enter'`). |
+| `reconnect()` | void | Tear down the current connection and start a fresh attempt. |
+
+`<RemoteControl />` is a single forward-refed component with no providers and no contexts. It works inside any React 19 tree.
+
+## Authentication model
+
+The browser never sees an API key. The pattern is:
+
+1. Browser asks **your** backend for a session.
+2. Backend uses `LIM_API_KEY` to call `lim.iosInstances.create(...)`.
+3. Backend returns `{ url, token }` to the browser.
+4. `<RemoteControl url={url} token={token} />` opens `wss://<url>?token=<token>` directly to the instance.
+
+The token is bound to that one instance and expires when the instance terminates. There's no shared "Limrun token" the browser could misuse on other instances.
+
+If the browser tab is open longer than the instance's `inactivityTimeout`, the connection will drop when Limrun terminates the instance. Catch this in your backend's cleanup path or set `inactivityTimeout` to something longer than your expected session.
+
+## Instance lifecycle for embedded sessions
+
+There are three knobs to think about:
+
+| Knob | Where | Typical value |
+|---|---|---|
+| `spec.inactivityTimeout` | Create call | `10m` for an interactive product, longer for embedded preview links. |
+| `spec.hardTimeout` | Create call | `2h` as a safety cap. |
+| Explicit delete on unmount | Frontend cleanup → backend `DELETE` | Best UX. Instance released immediately. |
+
+Add a backend reaper that periodically deletes instances whose labels match users who've disconnected. The pattern looks like:
+
+```ts
+// Every minute, clean up sessions older than 30 minutes
+setInterval(async () => {
+  const stale = lim.iosInstances.list({ labelSelector: 'managed_by=platform-embed', state: 'ready' });
+  for await (const inst of stale) {
+    const age = Date.now() - new Date(inst.metadata.createdAt).getTime();
+    if (age > 30 * 60 * 1000) await lim.iosInstances.delete(inst.metadata.id);
+  }
+}, 60_000);
+```
+
+## Reuse on revisit
+
+If a user comes back to the same session (e.g. reopens a tab), `reuseIfExists: true` with a stable label set returns the existing instance:
+
+```ts
+const instance = await lim.iosInstances.create({
+  reuseIfExists: true,
+  metadata: { labels: { tenant, user, project } },
+  spec: { /* ... */ },
+});
+```
+
+Limrun matches on `(region, labels)`. The same `tenant=X, user=Y, project=Z` combination returns the same instance until it terminates.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Asset Storage" icon="package" href="/platform/asset-storage">
+    Pre-install apps at instance boot so the embedded simulator opens straight into your product.
+  </Card>
+  <Card title="Run an iOS Simulator" icon="smartphone" href="/ios/run-simulator">
+    Direct device-control API. Pair with `<RemoteControl />` for backend-driven scripting alongside the embedded view.
+  </Card>
+  <Card title="Run an Android Emulator" icon="tablet-smartphone" href="/android/run-emulator">
+    Same embed pattern, Android side.
+  </Card>
+  <Card title="SDK Reference" icon="book-open" href="/reference">
+    The TypeScript / Python / Go / Java SDKs that power the backend.
+  </Card>
+</CardGroup>
