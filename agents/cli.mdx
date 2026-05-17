@@ -5,7 +5,7 @@ description: "Install the `lim` CLI in your coding agent's environment. The agen
 
 Coding agents drive Limrun through the `lim` CLI. Once it's installed and authenticated, the agent can create a simulator, build your app, tap through it, record video, and share a preview link without leaving its shell.
 
-The fastest setup is three commands: install the CLI, set your API key, then run `lim skills install`. The last command copies a short operating guide into your agent's skills folder so the agent picks it up on its own. The rest of this page covers the same guide and every command the agent uses.
+Setup is short: install the CLI, set your API key, and install the bundled skill. The rest of this page is the same guide the skill gives your agent, plus the command reference behind it.
 
 ## One-time setup
 
@@ -36,7 +36,7 @@ The recommended way is to install the bundled skill:
 lim skills install
 ```
 
-The CLI detects which coding agents you have on the machine (Claude Code, Cursor, Codex) and asks where to copy the skill. The skill is one short Markdown file. The canonical version is at [`typescript-sdk/packages/cli/skills/limrun-ios/SKILL.md`](https://github.com/limrun-inc/typescript-sdk/blob/main/packages/cli/skills/limrun-ios/SKILL.md).
+The CLI detects which coding agents you have on the machine (Claude Code, Cursor, Codex), asks which ones to set up, then asks whether to install into the current project or globally. The default skill is `limrun-ios`, one short Markdown file you can read at [`typescript-sdk/packages/cli/skills/limrun-ios/SKILL.md`](https://github.com/limrun-inc/typescript-sdk/blob/main/packages/cli/skills/limrun-ios/SKILL.md).
 
 If you'd rather not install the skill, paste this prompt into your agent instead. It does the same thing:
 
@@ -242,7 +242,7 @@ lim ios list-apps                              # bundle IDs of every installed a
 lim ios launch-app com.example.MyApp
 lim ios launch-app com.example.MyApp --mode RelaunchIfRunning
 lim ios terminate-app com.example.MyApp
-lim ios install-app ./MyApp.ipa                # local archive (.ipa, .zip, .tar.gz), or
+lim ios install-app ./MyApp.ipa                # local .ipa, or
 lim ios install-app https://...                # remote URL (downloaded server-side)
 ```
 
