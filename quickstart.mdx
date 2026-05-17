@@ -3,23 +3,21 @@ title: "Quickstart"
 description: "Get a remote iOS simulator and Xcode build running from your terminal in 3 minutes."
 ---
 
-Limrun gives you remote, programmable access to iOS simulators, Android emulators, and Xcode build sandboxes. This page walks the iOS+Xcode path because it's the most common starting point. By the end of this guide you'll have built an iOS app on Limrun's hosted Xcode and seen it running on a remote simulator in your browser.
+Build an iOS app on a remote Xcode sandbox and watch the result stream into your browser, all from your terminal.
 
-<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
-```text wrap
-You are helping me wire a cloud coding agent (Claude Code, Cursor, or Codex) to Limrun so it can build and run an iOS app on a remote simulator. Read /quickstart.md end-to-end, then:
+<Note>
+  If you're handing this off to a coding agent, read [CLI for coding agents](/agents/cli) instead. That page is the skill an agent should follow end to end.
+</Note>
 
-1. Install the CLI with `npm install --global @limrun/cli` and verify with `lim --help`.
-2. Authenticate: run `lim login` (browser flow, writes to `~/.lim/config.yaml`) or set `LIM_API_KEY` in `.env` and confirm `.env` is in `.gitignore`.
-3. Create an iOS instance with the Xcode sandbox attached:
-   lim ios create --xcode --reuse-if-exists --label project=<my-project>
-   Print the `Signed Stream URL` so the user can watch the simulator in a browser.
-4. From inside the iOS project, run `lim xcode build .`. Add `--scheme` and `--workspace` if the project needs them.
-5. After a successful build, drive the UI with `lim ios element-tree` and `lim ios tap-element --ax-label "<label>"`. Tear down with `lim ios delete`.
+## Try it in your browser first
 
-Never call local `xcodebuild`. Never spin up a local simulator. Use the `lim` CLI for every build and every device interaction. For deeper context, read /agents/cli.md.
-```
-</Accordion>
+If you'd rather poke at an instance before installing anything, [console.limrun.com](https://console.limrun.com) has a **Playground** that creates and streams an instance from a dropdown. Pick an OS, pick an app to preinstall, hit **Start**.
+
+<Frame>
+  <img src="/images/console/01-playground-empty.png" alt="Limrun console Playground with Organization, Operating System, Apps, Open URL, and Start controls" />
+</Frame>
+
+The rest of this page covers the CLI flow.
 
 ## Prerequisites
 
@@ -30,41 +28,43 @@ Never call local `xcodebuild`. Never spin up a local simulator. Use the `lim` CL
   ```bash .env
   LIM_API_KEY=lim_...
   ```
-- **The `lim` CLI.** Install [`@limrun/cli`](https://www.npmjs.com/package/@limrun/cli). Requires Node.js 20 LTS or newer (or Bun).
+- **The `lim` CLI.** Install [`@limrun/cli`](https://www.npmjs.com/package/@limrun/cli). Requires Node.js 20 LTS or newer.
   ```bash
   # Pick your package manager
   npm  install --global @limrun/cli
   pnpm add     --global @limrun/cli
   bun  add     --global @limrun/cli
-
-  lim --help   # should list topics: ios, android, xcode, asset, session, skills
   ```
 
 ## Set up the build
 
 <Steps>
   <Step title="Authenticate">
-    Run `lim login` to open the console in your browser. The CLI listens on `http://localhost:32412` for the callback and writes the returned key to `~/.lim/config.yaml` (mode `0600`).
+    Either set `LIM_API_KEY` in your environment or run `lim login`. Both work; pick whichever fits your setup.
+
+    **Environment variable.** The CLI reads `LIM_API_KEY` from the shell. It also auto-loads `.env` files in your current working directory, so the line you added to `.env` in the prerequisites is enough on its own.
+
+    ```bash
+    export LIM_API_KEY=lim_...
+    ```
+
+    **Browser flow.** `lim login` opens the console, listens on `http://localhost:32412` for the callback, and writes the returned key to `~/.lim/config.yaml` (mode `0600`).
 
     ```bash
     lim login
     ```
 
-    For CI, devcontainers, or cloud agents that can't open a browser, export `LIM_API_KEY` instead. The CLI and every SDK pick it up automatically.
-
-    ```bash
-    export LIM_API_KEY=lim_...
-    ```
+    For CI, devcontainers, or anything headless, the env var path is the right choice.
   </Step>
 
   <Step title="Create an iOS instance with Xcode attached">
-    A single `lim ios create --xcode` call provisions the simulator and an attached Xcode build sandbox, then prints the IDs and stream URL when the instance reaches `ready`. The `--reuse-if-exists` plus `--label` pattern is the safe shape for re-runs: the second call returns the same instance instead of provisioning a new one.
+    A single `lim ios create --xcode` provisions a simulator and an attached Xcode sandbox in one call. Adding `--reuse-if-exists` and a `--label` makes re-runs return the same instance instead of creating a new one.
 
     ```bash
     lim ios create --xcode --reuse-if-exists --label project=quickstart
     ```
 
-    Open the **Signed Stream URL** from the output in any browser to watch the simulator live. The signed URL embeds its own short-lived token, so no API key is needed in the browser.
+    Open the **Signed Stream URL** from the output in any browser to watch the simulator live. The URL has its own token embedded, so no API key is needed in the browser.
   </Step>
 
   <Step title="Build and run your app">
@@ -84,21 +84,13 @@ Never call local `xcodebuild`. Never spin up a local simulator. Use the `lim` CL
     lim xcode build .
     ```
 
-    Build logs stream back to your terminal as they happen. On success, the build artifact auto-installs and auto-launches on the attached simulator. The browser tab pointed at the Signed Stream URL updates to your app's first screen in under a second.
+    Build logs stream back as they happen. On success, the build artifact auto-installs and auto-launches on the attached simulator. The streaming tab updates to your app's first screen a few seconds after the build completes.
 
     <Frame>
-      <img src="/images/console/05-ios-stream-booting.png" alt="Live iOS simulator streaming inside the Limrun console with the iOS home screen visible" />
+      <img src="/images/console/06-ios-app-launched.png" alt="The sample-native-app running on a remote iOS simulator, showing its 'Hello, world!' first screen" />
     </Frame>
   </Step>
 </Steps>
-
-## Skip the CLI for your first run
-
-If you'd rather poke at an instance before writing any code, [console.limrun.com](https://console.limrun.com) has a **Playground** that creates and streams an instance from a dropdown. Pick an OS, pick an app to preinstall (or none), hit **Start**, and a live simulator drops into the page. Switch to the CLI once you want builds (`lim xcode build`), labels, or scripted lifecycle.
-
-<Frame>
-  <img src="/images/console/01-playground-empty.png" alt="Limrun console Playground with Organization, Operating System, Apps, Open URL, and Start controls" />
-</Frame>
 
 ## Drive the app
 
@@ -113,10 +105,6 @@ lim ios type "Hello"
 
 The element tree is the source of truth for what the UI shows: labels, accessibility IDs, types, frames. Reach for it before every action; it's faster and more reliable than visual inspection.
 
-## Handle build failures
-
-If `lim xcode build` fails, the same log stream contains the diagnostic. The remote `xcodebuild` is the real Xcode toolchain, so error messages, signing problems, and scheme issues all surface exactly as they would locally. Fix the code, rerun `lim xcode build .`, and the delta-sync layer only ships the bytes that changed.
-
 ## Tear down
 
 When you're done, delete the instance. Without an ID, `lim ios delete` removes the last iOS instance the CLI created for you (the pointer is in `~/.lim/last-instances.json`).
@@ -125,38 +113,19 @@ When you're done, delete the instance. Without an ID, `lim ios delete` removes t
 lim ios delete
 ```
 
-## Pick your next product path
-
-The quickstart took the iOS+Xcode path. Limrun has three other major surfaces, each with its own guide:
+## Where to go next
 
 <CardGroup cols={2}>
-  <Card title="Coding agents" icon="bot" href="/agents/cli">
-    Wire Claude Code, Cursor, or Codex to the `lim` CLI with a drop-in skill: build, drive the UI, ship a preview link.
-  </Card>
-  <Card title="Run an Android Emulator" icon="tablet-smartphone" href="/android/run-emulator">
-    ADB tunnel, scrcpy streaming, Appium, Playwright, and the rest of the Android toolchain over a remote emulator.
-  </Card>
-  <Card title="Embed the simulator" icon="monitor-play" href="/platform/embed-simulator">
-    Stream a live iOS or Android simulator into your web app with `<RemoteControl />` from `@limrun/ui`.
+  <Card title="CLI for coding agents" icon="bot" href="/agents/cli">
+    Hand the build, drive, and ship loop off to a coding agent via the bundled skill.
   </Card>
   <Card title="Build with remote Xcode" icon="hammer" href="/ios/build-with-xcode">
     Every `lim xcode build` flag, real-device IPAs, source-sync internals, MCP-wrapped build tools.
   </Card>
-</CardGroup>
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="CLI for coding agents" icon="bot" href="/agents/cli">
-    The exact skill page Claude Code, Cursor, and Codex use to orchestrate a build/test loop on Limrun.
+  <Card title="Embed the simulator" icon="monitor-play" href="/platform/embed-simulator">
+    Stream a live iOS or Android simulator into your web app with `<RemoteControl />` from `@limrun/ui`.
   </Card>
-  <Card title="Automatic PR Previews" icon="git-pull-request" href="/ios/pr-previews">
-    Wire `lim xcode build --upload` into a GitHub workflow that posts a preview link on every PR.
-  </Card>
-  <Card title="SDK Reference" icon="book-open" href="/reference">
-    Auth, errors, the instance state machine, every resource × CRUD across TypeScript, Python, Go, Java, and cURL.
-  </Card>
-  <Card title="Asset Storage" icon="package" href="/platform/asset-storage">
-    Pre-install apps at boot and manage build artifacts.
+  <Card title="Run an Android Emulator" icon="tablet-smartphone" href="/android/run-emulator">
+    ADB tunnel, scrcpy streaming, Appium, and the rest of the Android toolchain over a remote emulator.
   </Card>
 </CardGroup>
