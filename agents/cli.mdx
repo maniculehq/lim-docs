@@ -1,33 +1,15 @@
 ---
 title: "CLI for coding agents"
-description: "A drop-in workflow for coding agents: install the `lim` CLI, create an iOS + Xcode pair, build, drive the UI, ship a preview link."
+description: "Install the `lim` CLI in your coding agent's environment. The agent then builds your iOS app on a remote Mac, drives the simulator, and posts preview links on PRs."
 ---
 
-This page is the cookbook your coding agent should read end to end. It mirrors the bundled `limrun-ios` skill that ships with the CLI; an agent that has the skill installed (see [Install the skill](#install-the-skill-into-your-agent)) already has the same instructions.
+Coding agents drive Limrun through the `lim` CLI. Once it's installed and authenticated, the agent can create a simulator, build your app, tap through it, record video, and share a preview link without leaving its shell.
 
-<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
-```text wrap
-You are an iOS build-and-test operator working with Limrun. Read /agents/cli.md end-to-end, then follow this loop for every task that involves running an iOS app:
+The fastest setup is three commands: install the CLI, set your API key, then run `lim skills install`. The last command copies a short operating guide into your agent's skills folder so the agent picks it up on its own. The rest of this page covers the same guide and every command the agent uses.
 
-1. Verify the CLI is available (`lim --version`). If it's missing, ask the user to install `@limrun/cli` before continuing.
-2. Make sure `LIM_API_KEY` is set in your environment. If it isn't, ask the user.
-3. Create (or reuse) an iOS+Xcode pair labelled with the issue, repo, and agent name:
-   lim ios create --xcode --reuse-if-exists --label issue=<ID> --label repo=<NAME> --label agent=<YOUR_NAME>
-   Surface the Signed Stream URL from the output so the user can watch.
-4. Build with `lim xcode build .` (never local `xcodebuild`). Use `--scheme` and `--workspace` for multi-scheme projects. Fix any build errors yourself; do not push them back to the user.
-5. Verify state before acting: `lim ios element-tree`. Prefer accessibility selectors over coordinates: `lim ios tap-element --ax-unique-id startButton` or `--ax-label "Save"`.
-6. For motion-heavy verification, record video: `lim ios record start`, then `lim ios record stop -o /tmp/demo.mp4`. Attach the video to the PR.
-7. Before opening a PR, upload the build and post a preview link:
-   ASSET_NAME=<your-pr-or-task-id>.zip
-   lim xcode build . --upload "${ASSET_NAME}"
-   Then post https://console.limrun.com/preview?asset=${ASSET_NAME}&platform=ios in the final message and PR description.
-8. Clean up with `lim ios delete`. That removes the last-created instance. If you spun up multiple, list them first: `lim ios list --label-selector "issue=<ID>"`.
+## One-time setup
 
-For MCP-based device control (an alternative to shelling out), see /agents/mcp.md.
-```
-</Accordion>
-
-## Install the CLI
+### 1. Install the CLI
 
 ```bash
 # Pick your package manager
@@ -36,19 +18,70 @@ pnpm add     --global @limrun/cli
 bun  add     --global @limrun/cli
 ```
 
-Requires Node.js 20 LTS or newer.
+Needs Node.js 20 LTS or newer.
 
-## Authenticate
+### 2. Set your API key
 
-Set `LIM_API_KEY` in the agent's environment. The CLI also auto-loads `.env` files from the current working directory.
+Set `LIM_API_KEY` in the environment your agent runs in. The CLI also picks up `.env` files in the working directory.
 
 ```bash
 export LIM_API_KEY=lim_...
 ```
 
-## Create an iOS + Xcode pair
+### 3. Give your agent the instructions
 
-A single command provisions both the simulator and the attached Xcode sandbox. Pass `--reuse-if-exists` and a stable `--label` set so subsequent runs (the same PR, the same issue, the same agent session) return the same instance instead of creating a new one.
+The recommended way is to install the bundled skill:
+
+```bash
+lim skills install
+```
+
+The CLI detects which coding agents you have on the machine (Claude Code, Cursor, Codex) and asks where to copy the skill. The skill is one short Markdown file. The canonical version is at [`typescript-sdk/packages/cli/skills/limrun-ios/SKILL.md`](https://github.com/limrun-inc/typescript-sdk/blob/main/packages/cli/skills/limrun-ios/SKILL.md).
+
+If you'd rather not install the skill, paste this prompt into your agent instead. It does the same thing:
+
+<Accordion icon="sparkles" title="Copy this prompt for your coding agent">
+```text wrap
+You're helping me build and test an iOS app on Limrun. For every task that runs the app:
+
+1. Check `lim --version`. If it's missing, ask me to install `@limrun/cli` first.
+2. Check that `LIM_API_KEY` is set. If not, ask me.
+3. Create or reuse an instance, with labels we can find later:
+   lim ios create --xcode --reuse-if-exists --label issue=<ID> --label repo=<NAME> --label agent=<YOUR_NAME>
+   Share the Signed Stream URL from the output so I can watch.
+4. Build with `lim xcode build .`. Never use local `xcodebuild`. For multi-scheme projects, add `--scheme` and `--workspace`. If the build fails, read the errors and fix the code; don't bounce them back to me.
+5. Before each tap, read the screen with `lim ios element-tree`. Prefer accessibility selectors:
+   lim ios tap-element --ax-unique-id startButton
+   lim ios tap-element --ax-label "Save"
+6. For anything involving motion, record video:
+   lim ios record start
+   lim ios record stop -o /tmp/demo.mp4
+   Attach the video to the PR.
+7. When the work is ready, upload the build and share a preview link:
+   ASSET_NAME=<pr-or-task-id>.zip
+   lim xcode build . --upload "${ASSET_NAME}"
+   Post https://console.limrun.com/preview?asset=${ASSET_NAME}&platform=ios in your final message and the PR description.
+8. Clean up with `lim ios delete`. If you created more than one instance, list first:
+   lim ios list --label-selector "issue=<ID>"
+
+For MCP-based device control instead of the CLI, see /agents/mcp.md.
+```
+</Accordion>
+
+## What the agent does
+
+The loop the skill walks the agent through:
+
+1. **Create or reuse an instance.** One `lim ios create --xcode` boots a simulator and an attached Mac sandbox. Labels let re-runs land on the same instance.
+2. **Build the app.** `lim xcode build .` syncs the source to the sandbox, runs `xcodebuild` remotely, streams the logs back, and installs the build on the simulator on success.
+3. **Read the screen, then act.** Before every tap, the agent reads `lim ios element-tree` and picks elements by accessibility ID. No flaky pixel coordinates.
+4. **Record video** for changes that involve motion.
+5. **Upload the build and share a preview link** so reviewers open the app in any browser.
+6. **Delete the instance** when the work is done.
+
+The rest of this page is the command reference behind each step.
+
+## Create an instance
 
 ```bash
 lim ios create --xcode \
@@ -58,50 +91,48 @@ lim ios create --xcode \
   --label agent=<AGENT_NAME>
 ```
 
-The CLI prints the IDs, the **Signed Stream URL** (open it in a browser to watch the simulator live), and the Xcode sandbox URL. Share the stream URL with the user when you start so they can watch.
+`--xcode` attaches a Mac sandbox to the simulator (required for `lim xcode build`). `--reuse-if-exists` returns an existing instance with the same labels instead of provisioning a new one. That matters when an agent retries a task and you want it to land on the same instance.
 
-### Useful create flags
+The output includes the instance ID, the **Signed Stream URL**, and the Xcode sandbox URL. Open the Signed Stream URL in any browser to watch the simulator live; the token is in the URL, so no login is required. Share the Signed Stream URL with the user at the start of a task.
 
-| Flag | Use |
+### Useful flags
+
+| Flag | What it does |
 |---|---|
-| `--xcode` | Attach an Xcode build sandbox to the simulator (required for `lim xcode build`). |
-| `--reuse-if-exists` | Return the existing instance with matching labels and region instead of provisioning a new one. |
-| `--label key=value` | Repeatable. Used by `--reuse-if-exists` and for cleanup queries. |
-| `--region us-west` | Pin the instance to a region. |
-| `--inactivity-timeout 10m` | Auto-terminate after N of no activity. `1m`, `10m`, `3h`. Default comes from your org settings. |
-| `--hard-timeout 3h` | Force-terminate after a hard ceiling. Default `0` means no hard cap. |
-| `--install ./build.app` | Local app file to upload and install at boot. Repeatable. |
-| `--install-asset <asset-name>` | Pre-installed asset from Asset Storage. Repeatable. |
+| `--xcode` | Attach a Mac sandbox. Required for `lim xcode build`. |
+| `--reuse-if-exists` | Return an existing instance with the same labels instead of creating a new one. |
+| `--label key=value` | Repeatable. Used by `--reuse-if-exists` and for cleanup. |
+| `--region us-west` | Pin to a region. |
+| `--inactivity-timeout 10m` | Auto-delete after this much idle time. `1m`, `10m`, `3h`. Org default applies if you skip it. |
+| `--hard-timeout 3h` | Force-delete after this much wall time. `0` (default) means no cap. |
+| `--install ./build.app` | Local app to upload and install at boot. Repeatable. |
+| `--install-asset <name>` | Pre-installed asset from Asset Storage. Repeatable. |
 | `--model iphone\|ipad\|watch` | Device model. Defaults to `iphone`. |
-| `--rm` | Delete the instance on CLI process exit (useful in one-shot agent invocations). |
+| `--rm` | Delete the instance when the CLI process exits. Handy for one-shot runs. |
 
-## Stay connected with persistent sessions
+### Keep one connection open across commands
 
-By default, every `lim ios` subcommand opens a fresh WebSocket to the instance, runs one action, and disconnects. That's fine for occasional commands, but multi-step agent loops benefit from a persistent connection.
+By default, every `lim ios` command opens a fresh WebSocket, runs one action, and disconnects. For multi-step agent loops, start a session daemon so the connection stays open:
 
 ```bash
-lim session start            # opens a background daemon connected to the last instance
+lim session start            # opens a background daemon
 lim session status           # see active sessions
-lim session stop             # close the session (or --all)
+lim session stop             # close one, or --all
 ```
 
-The daemon holds a WebSocket connection to the instance. Subsequent `lim ios` commands detect it and reuse the existing connection, dropping per-call latency from ~2 seconds to ~50ms.
+Subsequent `lim ios` commands reuse the open connection. Per-command latency drops from a couple of seconds to around 50 ms.
 
-The console has a **Connect** modal (cable icon next to a running instance) with one-click MCP installers for Replit, Cursor, and Claude Code that match the wiring on [MCP for controlling instances](/agents/mcp).
+The console's **Connect** modal (cable icon next to a running instance) also wraps this up as one-click MCP installers for Replit, Cursor, and Claude Code. See [MCP for controlling instances](/agents/mcp).
 
-<Frame>
-  <img src="/images/console/07-connect-modal.png" alt="Console Connect modal with Add to Replit, Add to Cursor, Claude Code, and Custom MCP options" />
-</Frame>
-
-## Build
-
-Always use `lim xcode build`. Never local `xcodebuild`. The CLI delta-syncs the working directory to the remote Xcode sandbox, runs `xcodebuild` server-side, streams the logs back, and on success auto-installs and auto-launches the app on the attached simulator.
+## Build the app
 
 ```bash
 lim xcode build .
 ```
 
-For multi-scheme projects or workspaces:
+This is the only build command. Don't use local `xcodebuild`. The CLI syncs your working directory to the Mac sandbox (only the changed bytes), runs `xcodebuild` server-side, streams the logs back, and installs the build on the attached simulator on success.
+
+For workspaces or multi-scheme projects:
 
 ```bash
 lim xcode build . --workspace MyApp.xcworkspace --scheme MyApp
@@ -111,46 +142,46 @@ lim xcode build . --workspace MyApp.xcworkspace --scheme MyApp
   <img src="/images/console/06-ios-app-launched.png" alt="The built app running on the remote iOS simulator after a successful lim xcode build" />
 </Frame>
 
-### Key build flags
+### Build flags
 
-| Flag | Use |
+| Flag | What it does |
 |---|---|
-| `--scheme MyApp` | Xcode scheme. |
+| `--scheme MyApp` | Xcode scheme name. |
 | `--workspace path.xcworkspace` | Use a workspace file. |
-| `--project path.xcodeproj` | Use a project file (alternative to workspace). |
+| `--project path.xcodeproj` | Use a project file (alternative to `--workspace`). |
 | `--sdk iphonesimulator\|iphoneos\|watchsimulator\|watchos` | Target SDK. |
-| `--upload <asset_name>` | Upload the build artifact to Asset Storage under this name. Used for preview links. |
-| `--signed-upload-url <url>` | Upload the artifact to a pre-signed URL you provide (S3, GCS, etc). |
-| `--certificate-p12 path.p12` `--certificate-password ...` `--provisioning-profile path.mobileprovision` | Sign for real-device builds. |
-| `--additional-file local=remote` | Sync an extra file (e.g. `~/.netrc`) into the sandbox each build. Repeatable. |
-| `--ignore 'regex'` | Exclude paths from the sync. Repeatable. |
-| `--basis-cache-dir path` `--max-patch-bytes N` | Tune the xdelta3 client cache. |
+| `--upload <asset_name>` | Save the build artifact to Asset Storage under this name. Used for preview links. |
+| `--signed-upload-url <url>` | Upload to your own pre-signed URL (S3, GCS, etc). |
+| `--certificate-p12 path.p12` `--certificate-password ...` `--provisioning-profile path.mobileprovision` | Sign for a real-device build. |
+| `--additional-file local=remote` | Sync an extra file (like `~/.netrc`) into the sandbox on every build. Repeatable. |
+| `--ignore 'regex'` | Skip paths during sync. Repeatable. |
+| `--basis-cache-dir path` `--max-patch-bytes N` | Tune the local sync cache. |
 
-The default sync ignores `.git`, `.DS_Store`, the basis cache directory, and anything matched by your project's `.gitignore`. `.xcconfig` files are always kept. Build artifacts like `DerivedData/` and `xcuserdata/` are typically covered by a standard Xcode `.gitignore`; if yours doesn't include them, add `--ignore` patterns.
+The sync skips `.git`, `.DS_Store`, the basis cache, and anything in your `.gitignore`. `.xcconfig` files are always synced. If your `.gitignore` doesn't cover `DerivedData/` or `xcuserdata/`, add them with `--ignore`.
 
-## Verify state before acting
+## Read the screen, then act
 
-Always read state before issuing the next action. There is no `sleep` needed between actions and the read; the calls are synchronous on the device side.
+Always read state before the next action. The element tree shows every label, accessibility ID, type, and frame on the screen. It's the source of truth, not a screenshot.
 
 ```bash
 lim ios element-tree
 ```
 
-The element tree is the authoritative source of truth for the UI (labels, accessibility IDs, types, frames). For large screens it can be sizable, so pipe through `grep` or `jq`:
+The tree can be big. Pipe through `grep` or `jq` so it doesn't fill your agent's context window:
 
 ```bash
 lim ios element-tree --json | jq '.[] | select(.AXLabel | contains("Continue"))'
 ```
 
-For visual-only checks, fall back to screenshots:
+For a visual check, take a screenshot:
 
 ```bash
 lim ios screenshot ./out.png
 ```
 
-## Drive the UI
+### Tap, type, scroll
 
-Prefer accessibility identifiers, then labels, then coordinates as a last resort. The first form is stable across UI redesigns; the last is brittle.
+Find elements by accessibility ID first, then label, then coordinates as a last resort. The first two survive UI changes; coordinates don't.
 
 ```bash
 lim ios tap-element --ax-unique-id startButton
@@ -159,9 +190,9 @@ lim ios tap-element --type Button --ax-label "Done"
 lim ios tap 201 450
 ```
 
-`tap-element` accepts: `--ax-unique-id`, `--ax-label`, `--ax-label-contains`, `--type`, `--title`, `--title-contains`, `--ax-value`. At least one is required; combining them narrows the match.
+`tap-element` accepts `--ax-unique-id`, `--ax-label`, `--ax-label-contains`, `--type`, `--title`, `--title-contains`, and `--ax-value`. Combine them to narrow the match.
 
-Text input, keys, scrolling:
+Text, keys, scrolling, deep links:
 
 ```bash
 lim ios type "hello world" --enter
@@ -170,9 +201,9 @@ lim ios scroll down --amount 300
 lim ios open-url "https://apple.com"
 ```
 
-### Batch actions for precise timing
+### Run several actions in one shot
 
-When you need a sequence executed without round-trip latency between steps, use `lim ios perform`. The server runs the whole batch in one shot and stops on the first failure.
+When a sequence shouldn't have round-trip latency between steps, use `lim ios perform`. The server runs the whole batch and stops on the first failure.
 
 ```bash
 lim ios perform \
@@ -200,7 +231,9 @@ lim ios perform --file ./actions.yaml
   pressEnter: true
 ```
 
-Supported action `type`s: `tap`, `tapElement`, `incrementElement`, `decrementElement`, `setElementValue`, `typeText`, `pressKey`, `scroll`, `toggleKeyboard`, `openUrl`, `setOrientation`, `wait`, `touchDown`, `touchMove`, `touchUp`, `keyDown`, `keyUp`, `buttonDown`, `buttonUp`. Hardware buttons for `buttonDown` / `buttonUp`: `home`, `lock`, `side`, `applePay`, `softwareKeyboard`.
+Supported `type`s: `tap`, `tapElement`, `incrementElement`, `decrementElement`, `setElementValue`, `typeText`, `pressKey`, `scroll`, `toggleKeyboard`, `openUrl`, `setOrientation`, `wait`, `touchDown`, `touchMove`, `touchUp`, `keyDown`, `keyUp`, `buttonDown`, `buttonUp`.
+
+Hardware button names for `buttonDown` and `buttonUp`: `home`, `lock`, `side`, `applePay`, `softwareKeyboard`.
 
 ## Apps and logs
 
@@ -209,11 +242,11 @@ lim ios list-apps                              # bundle IDs of every installed a
 lim ios launch-app com.example.MyApp
 lim ios launch-app com.example.MyApp --mode RelaunchIfRunning
 lim ios terminate-app com.example.MyApp
-lim ios install-app ./MyApp.app                # or a URL
-lim ios install-app https://...               # remote download, server-side
+lim ios install-app ./MyApp.ipa                # local archive (.ipa, .zip, .tar.gz), or
+lim ios install-app https://...                # remote URL (downloaded server-side)
 ```
 
-Streaming logs (Ctrl-C to stop), or tail the last N lines:
+Stream live logs or tail the last N lines:
 
 ```bash
 lim ios app-log com.example.MyApp --follow
@@ -221,9 +254,9 @@ lim ios app-log com.example.MyApp --tail 200
 lim ios syslog
 ```
 
-## Record a demo video
+## Record a video
 
-For anything involving motion (animations, gestures, gameplay), prefer recording over screenshots. Always include a demo video on the PR you ship.
+For anything involving motion (animations, gestures, gameplay), record a video instead of taking screenshots. Always attach it to the PR.
 
 ```bash
 lim ios record start
@@ -231,54 +264,43 @@ lim ios record start
 lim ios record stop -o /tmp/demo.mp4
 ```
 
-`--quality 5` (default) through `--quality 10` trades file size for fidelity. Pass `--presigned-url` instead of `-o` to upload the recording directly to your own bucket.
+`--quality 5` is the default; raise it up to `10` for higher fidelity at the cost of file size. Pass `--presigned-url` instead of `-o` to upload the recording straight to your own bucket.
 
-## Finalize: upload the build and post a preview link
+## Share a preview link
 
-When the work is done and you're opening a PR, build with `--upload` so the build artifact lands in Asset Storage, then construct a preview URL the reviewer can open from any browser.
+When the work is ready for review, build with `--upload` so the artifact lands in Asset Storage, then post the preview URL.
 
 ```bash
 ASSET_NAME="${PR_NUMBER:-$(date +%s)}.zip"
 lim xcode build . --upload "${ASSET_NAME}"
 ```
 
-The preview URL:
+Then share:
 
 ```
 https://console.limrun.com/preview?asset=${ASSET_NAME}&platform=ios
 ```
 
-Always include this link in your final message to the user (and in the PR description).
+The reviewer opens it in any browser. No install, no Mac.
 
-## Clean up
+## Delete the instance
 
 ```bash
 lim ios delete
 ```
 
-Without an ID, this removes the last iOS instance the CLI created for you. Its ID is read from `~/.lim/last-instances.json`. To clean up many instances created across an agent session, use a label selector:
+With no ID, this deletes the last instance the CLI created (tracked in `~/.lim/last-instances.json`). If an agent created several instances in one session, list them by label first:
 
 ```bash
 lim ios list --label-selector "agent=cursor,issue=LIM-34"
-# then delete each by ID, or terminate them in batch from the console
 ```
 
-## Gotchas
+## Watch out for these
 
-- **`element-tree` can be large.** Pipe through `grep` or `jq` rather than dumping the full tree into the agent's context window.
-- **Build errors are your job.** If `lim xcode build` fails, read the error output, fix the code, and rebuild. Don't push the failure back to the user.
-- **Bundle ID discovery.** If you don't know the bundle ID, check the Xcode project files or run `lim ios list-apps` after a successful build.
-- **`lim ios delete` defaults to the last instance.** If you've been creating instances in a loop, double-check `lim ios list` before deleting.
-
-## Install the skill into your agent
-
-`lim skills install` copies the bundled skill into your coding agent's native skills directory so the agent discovers it without being prompted. Run it interactively the first time; the CLI detects which agents you have installed and asks where to write.
-
-```bash
-lim skills install
-```
-
-The skill file ships inside `@limrun/cli`. Read the canonical version at [`typescript-sdk/packages/cli/skills/limrun-ios/SKILL.md`](https://github.com/limrun-inc/typescript-sdk/blob/main/packages/cli/skills/limrun-ios/SKILL.md).
+- **`element-tree` is big.** Pipe through `grep` or `jq` so it doesn't fill your agent's context window.
+- **Build errors are the agent's job.** If `lim xcode build` fails, the agent reads the output, fixes the code, and rebuilds. It doesn't push the failure back to the user.
+- **Don't know the bundle ID?** Check the Xcode project, or run `lim ios list-apps` after a successful build.
+- **`lim ios delete` defaults to the last instance.** If you created more than one in a session, run `lim ios list` first.
 
 ## Next steps
 
@@ -287,6 +309,6 @@ The skill file ships inside `@limrun/cli`. Read the canonical version at [`types
     Use the per-instance MCP server instead of (or alongside) the CLI for agents that prefer tool-use over shell.
   </Card>
   <Card title="Build with remote Xcode" icon="hammer" href="/ios/build-with-xcode">
-    Every `lim xcode build` flag in depth, signing real-device IPAs, MCP-wrapped builds.
+    Every `lim xcode build` flag in depth. Signing real-device IPAs. MCP-wrapped builds.
   </Card>
 </CardGroup>
