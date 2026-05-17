@@ -138,7 +138,11 @@ lim ios create --reuse-if-exists \
 
 ## Connect to the instance
 
-Once the instance is `ready`, open a WebSocket client to control it. The TypeScript SDK covers every operation. The Go SDK covers most of them (screenshot, element-tree, tap, tap-element, typeText, pressKey, launchApp, listApps, openUrl, installApp, lsof, setOrientation, simctl streaming, plus element helpers). Python and Java only ship the control plane (creating, listing, deleting instances). For device control in those languages, use the CLI or raw REST. See the [SDK capability matrix](/reference#sdk-capability-matrix) for the full breakdown.
+Once the instance is `ready`, open a WebSocket client to drive it.
+
+- **TypeScript** covers the full device-control surface (every method on this page).
+- **Go** covers most of the same methods. See the [SDK capability matrix](/reference#sdk-capability-matrix) for the exact list.
+- **Python** and **Java** only ship the control plane (create, list, delete instances). For taps, screenshots, and other device actions in those languages, drive the device through the CLI or raw REST.
 
 <CodeGroup>
 ```ts TypeScript
@@ -180,7 +184,10 @@ lim session start
 ```
 </CodeGroup>
 
-`createInstanceClient` (TypeScript) resolves once the WebSocket has connected and the initial device-info fetch has finished. After that, `client.deviceInfo` is populated synchronously with `udid`, `screenWidth`, `screenHeight`, and `model`. The Go `iosws.NewClient` returns the client immediately and connects lazily. The first call blocks until the WebSocket is up.
+The TypeScript and Go clients initialize differently:
+
+- **TypeScript**: `await createInstanceClient(...)` returns only after the WebSocket is open. As soon as it returns, `client.deviceInfo` has `udid`, `screenWidth`, `screenHeight`, and `model` ready to read.
+- **Go**: `iosws.NewClient(...)` returns the client immediately. The first device call blocks until the WebSocket is open.
 
 ### Where the URLs come from
 

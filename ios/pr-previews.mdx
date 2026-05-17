@@ -167,9 +167,33 @@ Each `lim xcode create` is cheap, but instances still count against your usage. 
 
 Trigger it from the same workflow file by adding `closed` to the `on.pull_request.types` array.
 
-## Why a workflow instead of a packaged Action
+## Use the packaged Action for less boilerplate
 
-Writing your own workflow is the most flexible option today: you call `lim xcode build` (the standard build command), name the artifact however you want, and post the comment with whatever template you prefer. The same pattern works on GitLab CI, CircleCI, Buildkite, Jenkins, and any other runner that can install `npm i -g @limrun/cli` and run a shell script. No GitHub-specific dependency.
+If your CI is GitHub Actions, [`limrun-inc/ios-preview-action`](https://github.com/limrun-inc/ios-preview-action) wraps the create, build, upload, and PR-comment steps into one:
+
+```yaml .github/workflows/ios-preview.yml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: limrun-inc/ios-preview-action@main
+        with:
+          project-path: .
+          api-key: ${{ secrets.LIM_API_KEY }}
+```
+
+Inputs: `project-path`, `project`, `workspace`, `scheme`, `sdk`, `api-key`, `github-token`. Outputs: `preview-url`, `asset-id`, `asset-name`.
+
+Write the workflow by hand (as shown above) when you need finer control: a custom comment template, a different artifact-naming scheme, signing flags, or a runner outside GitHub Actions. The CLI is plain Node, so the same `lim xcode build --upload` pattern works on GitLab CI, CircleCI, Buildkite, Jenkins, and any other runner that can install `npm i -g @limrun/cli`.
 
 ## Next steps
 
