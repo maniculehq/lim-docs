@@ -189,11 +189,14 @@ If a file is both tracked by git and ignored, the SDK warns you so you can fix t
 
 If your build needs files that aren't in your repo (a `.netrc` for private package access, a CI-only `Config.swift`, a secrets file), pass them via `additionalFiles` on the SDK or `--additional-file local=remote` on the CLI. Paths starting with `~/` expand to the sandbox's home directory.
 
-### Tune the patch budget
+### Tune the delta sync
 
-`maxPatchBytes` (default `4 * 1024 * 1024`, or 4 MiB) caps the size of any single xdelta3 patch. When a patch would exceed it, the SDK falls back to a full upload for that file. Lower it on slow networks; raise it for large source changes.
+**`maxPatchBytes`** caps how big a single file's diff can grow before the SDK gives up on a diff and uploads the file in full. Default 4 MiB.
 
-`basisCacheDir` holds the last-synced copy of every file so the SDK can compute patches locally without talking to the server. By default it lives under the OS temp dir, scoped by the sync target. Pinning it (e.g. `/var/cache/lim`) keeps the cache warm across CI runs.
+- Lower it on a slow connection, where a big diff takes longer to compute and upload than just sending the whole file.
+- Raise it when one file routinely changes by tens of megabytes.
+
+**`basisCacheDir`** is where the SDK keeps a copy of every file from the last sync, so the next sync can compute the diff locally instead of refetching from the server. By default the cache lives in your OS temp directory, which CI runners usually wipe between jobs. Pin it to a path that survives across runs (for example `/var/cache/lim`) so each CI build doesn't start from scratch.
 
 ## Run `xcodebuild`
 
