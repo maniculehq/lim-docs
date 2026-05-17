@@ -1,31 +1,31 @@
 ---
 title: "MCP for controlling instances"
-description: "Connect a coding agent directly to a Limrun instance over MCP. Every instance has its own URL. No shared endpoint, no extra setup."
+description: "Every Limrun instance comes with its own MCP server. Wire it into a coding agent for tight device-control loops without shelling out to the CLI."
 ---
 
-Every iOS and Android instance Limrun creates has its own Model Context Protocol (MCP) server. Three things to know:
+Every iOS and Android instance Limrun creates has its own [Model Context Protocol](https://modelcontextprotocol.io) server. Three things to know up front:
 
-- **One server per instance, not one shared endpoint.** The URL is in `instance.status.mcpUrl`.
-- **Auth uses your org API key**, not `instance.status.token`. Pass it as `Authorization: Bearer lim_…`.
-- **The tools are the same ones the SDK exposes** for controlling a simulator: screenshots, taps, element tree, text input, app launch, app terminate, scrolling, deep links, recording.
+- **One server per instance.** Not a shared endpoint. The instance returns its MCP URL once it's ready (covered below).
+- **Auth uses your org API key.** The same `lim_...` key you use everywhere else, passed as an `Authorization: Bearer` header.
+- **Tool surface is device control, not the full SDK.** Screenshots, taps, app lifecycle, log fetch. Builds and asset uploads stay on the CLI.
 
-This page covers when to use MCP instead of the CLI, how to find the URL, and how to wire it into Claude Code, Claude Desktop, Cursor, Codex, and custom MCP clients.
+This page covers when to reach for MCP vs the CLI, how to get the URL, how to wire it into Claude Code, Claude Desktop, Cursor, Codex, and custom MCP clients, and how to build your own MCP server around the SDK when you need more than device control.
 
 ## When to use the CLI, MCP, or both
 
 | Aspect | `lim` CLI | Per-instance MCP server |
 |---|---|---|
 | **Where it runs** | The agent's shell | The agent's MCP client transport |
-| **Auth** | Org API key in env or config | Same org API key as `Authorization: Bearer` (not `status.token`) |
-| **Connection** | Fresh WebSocket per command (or a persistent session via `lim session start`) | Long-lived MCP session |
-| **What it can do** | Every `lim ios *`, `lim xcode *`, `lim asset *`, and `lim android *` command | The device-control subset only: no `xcode build`, no `lim asset push` |
-| **Best for** | Builds, instance lifecycle, asset management | Fast tap-screenshot-elementTree loops where every round-trip matters |
+| **Auth** | Org API key in env or config | Same org API key as `Authorization: Bearer` |
+| **Connection** | Fresh WebSocket per command, or a persistent one via `lim session start` | Long-lived MCP session |
+| **What it can do** | Everything Limrun does. Full [CLI reference](/reference). | Device control only. Five tools, listed below. No builds, no asset uploads. |
+| **Best for** | Builds, instance lifecycle, asset management | Tight tap-screenshot-element-tree loops where round-trips matter |
 
 Most agents end up using both. Use the CLI for provisioning, builds, and assets. Use MCP when the agent needs native tool-use over the device-control surface without shelling out.
 
-## Get the `mcpUrl`
+## Get the MCP URL
 
-`mcpUrl` is returned in `instance.status` once the instance reaches `ready`. The URL itself has no credentials in it. Auth goes in an `Authorization: Bearer` header, and the bearer is your **org API key** (the same `lim_...` key you use with the REST API), not the per-instance `instance.status.token`.
+Create an instance, then read the `mcpUrl` field off its status.
 
 <CodeGroup>
 ```ts TypeScript
@@ -40,7 +40,6 @@ const instance = await lim.iosInstances.create({
 });
 
 console.log(instance.status.mcpUrl);
-// e.g. https://<dc>-<shard>.limrun.net/v1/ios_<id>/mcp
 ```
 
 ```python Python
@@ -61,8 +60,8 @@ fmt.Println(inst.Status.McpURL)
 ```
 
 ```java Java
-// The Java SDK does not yet expose `mcpUrl` on the typed Status model.
-// Read it from the raw additional-properties map (or use `lim ios get --json`).
+// The Java SDK does not yet expose mcpUrl on the typed Status model.
+// Read it from the raw additional-properties map (or use the CLI).
 IosInstance instance = client.iosInstances().create(
     IosInstanceCreateParams.builder()
         .wait(true)
@@ -76,27 +75,27 @@ IosInstance instance = client.iosInstances().create(
 );
 JsonValue mcpUrl = instance.status()._additionalProperties().get("mcpUrl");
 ```
+</CodeGroup>
 
-```bash CLI
+Or from the CLI:
+
+```bash
 lim ios get --json | jq -r '.status.mcpUrl'
 ```
-</CodeGroup>
+
+The URL itself has no credentials in it. Authenticate by passing your org API key as an `Authorization: Bearer lim_...` header on every MCP request. This is the same `lim_...` key from your console, not the per-instance `status.token`.
 
 Android instances expose `mcpUrl` the same way.
 
-If you already have an instance running, the console is the fastest path. Click the cable icon next to a running instance for one-click "Add to Replit", "Add to Cursor", and copy-paste Claude Code commands:
+If you already have an instance running, the console at `console.limrun.com` gives copy-paste snippets for each supported agent. Open a running instance and click the connect icon in the sidebar.
 
 <Frame>
-  <img src="/images/console/07-connect-modal.png" alt="Connect modal on console.limrun.com with one-click Replit/Cursor installers, a Claude Code section, and a Custom section" />
+  <img src="/images/console/07-connect-modal.png" alt="Connect modal on console.limrun.com with one-click Replit and Cursor installers, plus collapsible Claude Code and Custom sections" />
 </Frame>
-
-The rest of this page covers the same wiring by hand, for agents the console doesn't have a button for.
 
 ## Wire it into your agent
 
 ### Claude Code
-
-The command from the Connect modal:
 
 ```bash
 claude mcp add simulator --transport http \
@@ -104,12 +103,12 @@ claude mcp add simulator --transport http \
   --header 'Authorization: Bearer lim_<your_api_key>'
 ```
 
-Replace `<mcpUrl>` with the value from `instance.status.mcpUrl` and `lim_<your_api_key>` with your Limrun API key. Verify with `claude mcp list`.
+Replace `<mcpUrl>` with the value from above and `lim_<your_api_key>` with your Limrun API key. Verify with `claude mcp list`.
 
 The console renders the same command with your real values filled in, ready to copy:
 
 <Frame>
-  <img src="/images/console/claude-code-limrun.png" alt="Connect modal on console.limrun.com with the Claude Code section expanded, showing the full claude mcp add simulator --transport http <mcpUrl> --header 'Authorization: Bearer lim_...' command ready to copy" />
+  <img src="/images/console/claude-code-limrun.png" alt="Connect modal with the Claude Code section expanded, showing the full claude mcp add command pre-populated with the instance URL and Authorization Bearer header" />
 </Frame>
 
 ### Claude Desktop
@@ -132,68 +131,80 @@ Add the URL to your MCP servers config in Claude Desktop's settings:
 
 ### Cursor
 
-The console's "Add to Cursor" button opens Cursor with the MCP server pre-filled. To set it up by hand, add a new MCP server in Cursor settings with `<mcpUrl>` and the `Authorization: Bearer lim_<your_api_key>` header.
+The console's "Add to Cursor" button opens Cursor with the MCP server pre-filled. To wire it by hand, add a new MCP server in Cursor's settings with the URL and the `Authorization: Bearer lim_<your_api_key>` header.
 
 ### Codex Web or any custom MCP client
 
-Any MCP client with HTTP transport works. Pass the `mcpUrl` as the endpoint and `Authorization: Bearer lim_<your_api_key>` as a header. The Connect modal's **Custom** section gives you both values directly:
+Any MCP client that speaks HTTP transport works. Pass the URL as the endpoint and `Authorization: Bearer lim_<your_api_key>` as a header. The Connect modal's **Custom** section gives both values pre-populated:
 
 <Frame>
-  <img src="/images/console/custom-agent-limrun.png" alt="Connect modal on console.limrun.com with the Custom section expanded, showing the MCP server URL and the Authorization Bearer header to paste into any MCP client" />
+  <img src="/images/console/custom-agent-limrun.png" alt="Connect modal with the Custom section expanded, showing the MCP server URL and the Authorization Bearer header to paste into any MCP client" />
 </Frame>
 
 ## What the MCP server exposes
 
-The hosted MCP server has the same device-control set as `Ios.createInstanceClient` (iOS) and the equivalent Android client:
+Five tools.
 
-- **Visual**: screenshot
-- **State**: element-tree
-- **Touch**: tap, tap-element by accessibility selector, scroll
-- **Input**: type, press key, toggle keyboard
-- **Navigation**: open URL or deep link
-- **App lifecycle**: launch app, terminate app
-- **Recording**: start or stop a video recording
+| Tool | What it does |
+|---|---|
+| `ios-screenshot-and-element-tree` | Returns the current screenshot and the accessibility element tree in one call. The agent should call this before every action to see the current state. |
+| `ios-use` | Performs a batch of actions in order. Action kinds: `tap`, `tapElement`, `setElementValue`, `incrementElement`, `decrementElement`, `type`, `pressKey`, `scroll`, `wait`, `toggleKeyboard`, `openUrl`, `setOrientation`, `touchDown`, `touchMove`, `touchUp`, `keyDown`, `keyUp`, `buttonDown`, `buttonUp`, `deviceInfo`, `startRecording`, `stopRecording`, `discoverStoreKitConfig`, `clearStoreKitConfig`, `softReset`. |
+| `ios-open-url` | Opens a URL or deep link in the simulator. Use this for Safari URLs and for opening apps via custom schemes (including `exp://` for Expo Go). |
+| `ios-app` | Lists installed apps and launches or terminates them. Does **not** install apps. Use the CLI or SDK for installs. |
+| `ios-logs` | Fetches the last N combined stdout/stderr log lines for a given bundle ID. |
 
-Parameter shapes and full reference for each operation live on [Run an iOS Simulator](/ios/run-simulator) and [Run an Android Emulator](/android/run-emulator).
+The actions inside `ios-use` map onto methods on the SDK's `createInstanceClient`. The MCP server batches them into a few tools rather than exposing one tool per action so the agent can group related steps into a single round-trip.
+
+App installs, Xcode builds, and asset uploads aren't on the MCP server. Those live on the CLI and SDK.
 
 ## Build your own MCP server around `lim`
 
-Sometimes the hosted MCP surface isn't quite what you want. Maybe you want `xcode build` exposed as a tool, or you want to wrap several `lim` commands into one higher-level tool. Building your own MCP server is straightforward: wrap the SDK or the CLI in whatever shape you need.
+The hosted MCP server only does device control. For anything else (running `xcode build`, syncing files, asset management), wrap the SDK in your own MCP server. The pattern is short: create an instance, get an SDK client for the sub-resource you want, register an MCP tool per operation you want exposed.
 
-The [`ios-with-xcode` example](https://github.com/limrun-inc/typescript-sdk/tree/main/examples/ios-with-xcode) is a working pattern: it uses `@modelcontextprotocol/sdk` to expose `xcode.xcodebuild()` as a single `build` MCP tool, then mounts it at `http://localhost:3000` for the agent to use.
+The [`ios-with-xcode` example](https://github.com/limrun-inc/typescript-sdk/tree/main/examples/ios-with-xcode) is a working pattern that wraps `xcodebuild` as a single `build` MCP tool. The snippet below is the MCP-tool registration only; the example also has the `xcode.sync(codeFolder)` step and the HTTP transport wiring you need to run it as a server.
 
 ```ts
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import Limrun from '@limrun/api';
 
+// 1. Create an iOS instance with an Xcode sandbox attached.
 const lim = new Limrun({ apiKey: process.env['LIM_API_KEY'] });
 const instance = await lim.iosInstances.create({
   wait: true,
   reuseIfExists: true,
   spec: { sandbox: { xcode: { enabled: true } } },
 });
+
+// 2. Build an SDK client for the embedded Xcode sandbox using the
+//    per-instance token.
 const xcode = await lim.xcodeInstances.createClient({
   apiUrl: instance.status.sandbox!.xcode!.url!,
   token: instance.status.token,
 });
 
+// 3. Register an MCP tool that runs xcodebuild on the sandbox and
+//    returns the build output as the tool result.
 const mcp = new McpServer({ name: 'xcodebuild', version: '1.0.0' });
 mcp.registerTool(
   'build',
-  {
-    title: 'xcodebuild',
-    description: 'Run xcodebuild on the remote Xcode sandbox and install on the simulator.',
-  },
+  { title: 'xcodebuild', description: 'Run xcodebuild on the remote sandbox.' },
   async () => {
     const build = xcode.xcodebuild();
-    const chunks: string[] = [];
-    build.stdout.on('data', (line) => chunks.push(line.toString()));
+    const lines: string[] = [];
+    build.stdout.on('data', (chunk) => lines.push(chunk.toString()));
     await build;
-    return { content: [{ type: 'text', text: chunks.join('\n') }] };
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   },
 );
 ```
+
+Three things to notice:
+
+- **Auth uses the per-instance `status.token`, not the org key.** The org key authenticates the *control plane* (creating the instance). The per-instance token authenticates the *data plane* (talking to the embedded Xcode sandbox). Mixing them up is the most common first-time error.
+- **The SDK client streams build output.** `build.stdout.on('data', ...)` collects each line as it arrives; `await build` resolves when the process exits and throws on a non-zero status. The MCP response gets the full log.
+- **The MCP transport is separate from the server registration.** The full example mounts both `/xcodebuild` (a raw HTTP endpoint) and an MCP transport on one Node HTTP server, so the same process is reachable by curl and by an MCP client. The skeleton above shows only the MCP side; see the example for the transport wiring.
+
+This pattern is Node-only as written. The TypeScript SDK is the only one that wraps the Xcode sandbox as a streaming client (`xcodeInstances.createClient` plus `xcode.xcodebuild()`). The Python, Go, and Java SDKs cover the REST CRUD surface (create / list / get / delete instances), so a Python MCP server that runs builds would shell out to `lim xcode build` from inside the tool handler.
 
 ## Next steps
 
