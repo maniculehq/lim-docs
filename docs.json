@@ -34,7 +34,6 @@
             "icon": "rocket",
             "pages": [
               "introduction",
-              "introduction-old",
               "quickstart"
             ]
           },

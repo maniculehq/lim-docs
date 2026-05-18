@@ -49,27 +49,6 @@ instance, err := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
 })
 ```
 
-```java Java
-IosInstance instance = client.iosInstances().create(
-    IosInstanceCreateParams.builder()
-        .wait(true)
-        .reuseIfExists(true)
-        .metadata(IosInstanceCreateParams.Metadata.builder()
-            .labels(IosInstanceCreateParams.Metadata.Labels.builder()
-                .putAdditionalProperty("name", "iap-test")
-                .build())
-            .build())
-        .spec(IosInstanceCreateParams.Spec.builder()
-            .sandbox(IosInstanceCreateParams.Spec.Sandbox.builder()
-                .xcode(IosInstanceCreateParams.Spec.Sandbox.Xcode.builder()
-                    .enabled(true)
-                    .build())
-                .build())
-            .build())
-        .build()
-);
-```
-
 ```bash CLI
 lim ios create --xcode --reuse-if-exists --label name=iap-test
 ```
@@ -164,7 +143,7 @@ await ios.clearStoreKitConfig(bundleId);
 
 ## CLI
 
-The CLI does not expose StoreKit commands directly today. Use the TypeScript SDK for the explicit and discover flows, or the [Python](/reference#python) / [Go](/reference#go) / [Java](/reference#java) SDKs once those operations land in your language of choice.
+The CLI does not expose StoreKit commands directly today. Use the TypeScript SDK for the explicit and discover flows, or the [Python](/reference#python) / [Go](/reference#go) SDKs once those operations land in your language of choice.
 
 ## Next steps
 

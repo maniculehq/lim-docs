@@ -14,12 +14,12 @@ The flow:
 
 ### SDK coverage by language
 
-| Surface | TypeScript | Python | Go | Java | CLI |
-|---|---|---|---|---|---|
-| Provision an Xcode instance | ✓ | ✓ | via REST | via REST | ✓ |
-| Sync source and run `xcodebuild` | ✓ | not in SDK | not in SDK | not in SDK | ✓ |
+| Surface | TypeScript | Python | Go | CLI |
+|---|---|---|---|---|
+| Provision an Xcode instance | ✓ | ✓ | via REST | ✓ |
+| Sync source and run `xcodebuild` | ✓ | not in SDK | not in SDK | ✓ |
 
-Python and Go users provision the instance with their SDK and drive the build with `lim xcode build`. Java users provision with `lim ios create --xcode` since the Java SDK doesn't yet support the paired-with-Xcode shape. See the [SDK capability matrix](/reference#sdk-capability-matrix).
+Python and Go users provision the instance with their SDK and drive the build with `lim xcode build`. See the [SDK capability matrix](/reference#sdk-capability-matrix).
 
 ## Two ways to use the Xcode sandbox
 
@@ -83,27 +83,9 @@ instance, err := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
 xcodeURL := instance.Status.Sandbox.Xcode.URL
 ```
 
-```java Java
-// Plain iOS instance only; the Java SDK doesn't yet type the xcode sandbox.
-// See the note below for the paired-with-Xcode flow.
-IosInstance instance = client.iosInstances().create(
-    IosInstanceCreateParams.builder()
-        .wait(true)
-        .reuseIfExists(true)
-        .metadata(IosInstanceCreateParams.Metadata.builder()
-            .labels(IosInstanceCreateParams.Metadata.Labels.builder()
-                .putAdditionalProperty("session", JsonValue.from("demo"))
-                .build())
-            .build())
-        .build()
-);
-```
-
 </CodeGroup>
 
 After this, `xcode` is the handle you use in the sync and build sections below.
-
-The Java SDK doesn't yet support the paired-with-Xcode flow. Provision the paired instance with `lim ios create --xcode` and read the URL from the CLI or REST.
 
 Or from the CLI:
 
@@ -149,7 +131,7 @@ Or from the CLI:
 lim xcode create --reuse-if-exists --label session=ci-build
 ```
 
-The **Go and Java SDKs don't yet have a standalone Xcode resource.** From those languages, either provision an iOS instance with the Xcode sandbox attached (the paired pattern above), POST to `/v1/xcode_instances` directly, or call `lim xcode create` from your process.
+The **Go SDK doesn't yet have a standalone Xcode resource.** From Go, either provision an iOS instance with the Xcode sandbox attached (the paired pattern above), POST to `/v1/xcode_instances` directly, or call `lim xcode create` from your process.
 
 You can also attach a simulator to a standalone Xcode sandbox later. See [Auto-install on the simulator](#auto-install-on-the-simulator).
 
@@ -192,6 +174,8 @@ The SDK skips these paths regardless of `.gitignore`:
 - Anything under `xcuserdata/` or ending in `.dSYM/`.
 
 On top of that, paths matched by your project's root `.gitignore` are skipped, with one exception: `.xcconfig` files always sync because Xcode needs them on the remote. If a file is both tracked by git and ignored, the SDK warns you so you can fix the mismatch.
+
+Dependency caches (`Pods/`, `.swiftpm/`, `Carthage/Build/`) don't need to ship: the remote sandbox detects `Podfile` / `Package.swift` / `Cartfile` and resolves the dependencies on its side before the build runs. Keep them in your local `.gitignore` as usual.
 
 To exclude something the SDK doesn't already skip, pass a regex on the CLI or a predicate on the SDK:
 

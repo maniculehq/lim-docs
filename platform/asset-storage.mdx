@@ -1,6 +1,6 @@
 ---
 title: "Asset Storage"
-description: "A managed binary store for `.ipa`, `.app.tar.gz`, `.apk`, and configuration files. Pre-install at boot, install on-demand, share preview links."
+description: "A managed binary store for iOS simulator builds (.app.zip / .app.tar.gz), Android APKs, and configuration files. Pre-install at boot, install on-demand, share preview links."
 ---
 
 Asset Storage is Limrun's bucket for build artifacts and instance-level config. It's the same store that backs `lim xcode build --upload`, `initialAssets` at instance creation, and the `console.limrun.com/preview` links you post on PRs. The same asset name can be used to install across regions, across instance generations, and across users on your org.
@@ -11,14 +11,16 @@ Two top-level kinds:
 
 | Kind | What it is | Examples |
 |---|---|---|
-| **App** | An installable binary | `.ipa`, `.app.tar.gz` (iOS), `.apk` (Android) |
+| **App** | An installable binary | iOS simulator builds (`.app` folder zipped or tarballed as `.app.zip` / `.app.tar.gz`); Android APKs (`.apk`) |
 | **Configuration** | An instance-level configuration value | Chrome flag for Playwright Android |
 
 App assets can be scoped to one OS by setting `os: 'ios' \| 'android'` on the asset, or left unscoped (the default) to install on either.
 
+iOS apps must be **simulator builds**: a real `.app` folder produced by `xcodebuild -sdk iphonesimulator`, packed into a `.zip` or `.tar.gz`. A signed device `.ipa` will upload, but it can't be installed on the cloud simulator because the simulator runs x86_64 / arm64 binaries built for it, not signed device builds. If you want a downloadable IPA artifact for distribution, see [`lim xcode build --sdk iphoneos --upload …`](/ios/build-with-xcode#sign-for-real-device-builds).
+
 ## Upload an asset
 
-The simplest path is `assets.getOrUpload`. It computes the local file's MD5, checks if a matching file already exists, and skips re-upload if so. The helper ships in **TypeScript and Go** today; Python and Java users do the two-step (`getOrCreate` then PUT) manually, shown below.
+The simplest path is `assets.getOrUpload`. It computes the local file's MD5, checks if a matching file already exists, and skips re-upload if so. The helper ships in **TypeScript and Go** today; Python users do the two-step (`getOrCreate` then PUT) manually, shown below.
 
 <CodeGroup>
 ```ts TypeScript
@@ -63,39 +65,6 @@ asset, err := lim.Assets.GetOrUpload(ctx, limrun.AssetGetOrUploadParams{
     Name: limrun.String("my-app-v1.2.3.tar.gz"), // optional
 })
 // asset.ID, asset.Name, asset.SignedDownloadUrl, asset.MD5
-```
-
-```java Java
-// Java has no getOrUpload helper today; do the two-step manually.
-import com.limrun.api.models.assets.AssetGetOrCreateParams;
-import com.limrun.api.models.assets.AssetGetOrCreateResponse;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.util.HexFormat;
-
-Path path = Path.of("./build/MyApp.app.tar.gz");
-byte[] data = Files.readAllBytes(path);
-String localMd5 = HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(data));
-
-AssetGetOrCreateResponse asset = client.assets().getOrCreate(
-    AssetGetOrCreateParams.builder().name("my-app-v1.2.3.tar.gz").build()
-);
-
-if (!asset.md5().map(localMd5::equals).orElse(false)) {
-    HttpResponse<String> resp = HttpClient.newHttpClient().send(
-        HttpRequest.newBuilder(URI.create(asset.signedUploadUrl()))
-            .header("Content-Type", "application/octet-stream")
-            .PUT(HttpRequest.BodyPublishers.ofByteArray(data))
-            .build(),
-        HttpResponse.BodyHandlers.ofString()
-    );
-    if (resp.statusCode() != 200) throw new RuntimeException("upload failed: " + resp.statusCode());
-}
 ```
 
 ```bash CLI
@@ -269,23 +238,6 @@ single, err := lim.Assets.Get(ctx, assetID, limrun.AssetGetParams{
 err = lim.Assets.Delete(ctx, assetID)
 ```
 
-```java Java
-List<Asset> assets = client.assets().list(
-    AssetListParams.builder()
-        .limit(50L)
-        .nameFilter("my-app-v1.2.3.tar.gz")
-        .includeDownloadUrl(true)
-        .build()
-);
-
-Asset single = client.assets().get(
-    assetId,
-    AssetGetParams.builder().includeDownloadUrl(true).build()
-);
-
-client.assets().delete(assetId);
-```
-
 ```bash CLI
 lim asset list
 lim asset list --name my-app-v1.2.3.tar.gz --download-url
@@ -385,6 +337,6 @@ The `os` field is `'ios' \| 'android' \| undefined`. Server-side defaults and co
     Combine `initialAssets` with `<RemoteControl />` so the user sees the right app on first paint.
   </Card>
   <Card title="SDK Reference" icon="book-open" href="/reference">
-    `assets.list` / `getOrCreate` / `getOrUpload` parameters across TypeScript, Python, Go, Java.
+    `assets.list` / `getOrCreate` / `getOrUpload` parameters across TypeScript, Python, and Go.
   </Card>
 </CardGroup>

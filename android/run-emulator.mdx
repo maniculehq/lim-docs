@@ -5,18 +5,18 @@ description: "Drive a remote Android emulator via ADB tunnel, the SDK control pl
 
 A Limrun Android instance is a fully-booted Android emulator. You drive it two ways:
 
-- **ADB tunnel** (the main door). Forwards a local TCP port to the remote emulator's ADB endpoint. Once it's up, Android Studio, `adb`, `scrcpy`, Appium, and Detox all auto-detect the device.
+- **ADB tunnel** (the main door). Forwards a local TCP port to the remote emulator's ADB endpoint. Once it's up, Android Studio, `adb`, `scrcpy`, Appium, and other ADB-aware tools all auto-detect the device.
 - **Narrow SDK surface** for the things that benefit from a typed API: taps, screenshots, element-tree, recording. Everything else goes through the tunnel.
 
 **SDK coverage by language:**
 
-| Surface | TypeScript | Python | Go | Java |
-|---|---|---|---|---|
-| Instance provisioning (CRUD) | ✓ | ✓ | ✓ | ✓ |
-| ADB tunnel | ✓ (`startAdbTunnel`) | not in SDK | ✓ (`tunnel.NewADB`, `Multiplexed`) | not in SDK |
-| Device control (taps, element-tree, etc.) | ✓ | not in SDK | not in SDK | not in SDK |
+| Surface | TypeScript | Python | Go |
+|---|---|---|---|
+| Instance provisioning (CRUD) | ✓ | ✓ | ✓ |
+| ADB tunnel | ✓ (`startAdbTunnel`) | not in SDK | ✓ (`tunnel.NewADB`, `Multiplexed`) |
+| Device control (taps, element-tree, etc.) | ✓ | not in SDK | not in SDK |
 
-Python and Java users provision via SDK, then drive everything else through the tunnel using ordinary `adb`. See [SDK capability matrix](/reference#sdk-capability-matrix).
+Python users provision via SDK, then drive everything else through the tunnel using ordinary `adb`. See [SDK capability matrix](/reference#sdk-capability-matrix).
 
 The console's Playground is the no-code way to spin one up. Pick an OS version (14 or 15), optionally pick an APK to preinstall, hit **Start**:
 
@@ -85,33 +85,6 @@ instance, err := lim.AndroidInstances.New(ctx, limrun.AndroidInstanceNewParams{
         HardTimeout:       limrun.String("0"),
     },
 })
-```
-
-```java Java
-import com.limrun.api.client.LimrunClient;
-import com.limrun.api.client.okhttp.LimrunOkHttpClient;
-import com.limrun.api.models.androidinstances.AndroidInstance;
-import com.limrun.api.models.androidinstances.AndroidInstanceCreateParams;
-
-LimrunClient client = LimrunOkHttpClient.fromEnv();
-
-AndroidInstance instance = client.androidInstances().create(
-    AndroidInstanceCreateParams.builder()
-        .wait(true)
-        .reuseIfExists(true)
-        .metadata(AndroidInstanceCreateParams.Metadata.builder()
-            .labels(AndroidInstanceCreateParams.Metadata.Labels.builder()
-                .putAdditionalProperty("app", "my-app")
-                .putAdditionalProperty("session", "demo")
-                .build())
-            .build())
-        .spec(AndroidInstanceCreateParams.Spec.builder()
-            .region("eu-north1")
-            .inactivityTimeout("10m")
-            .hardTimeout("0")
-            .build())
-        .build()
-);
 ```
 
 ```bash CLI

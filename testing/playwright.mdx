@@ -91,29 +91,6 @@ instance, err := lim.AndroidInstances.New(ctx, limrun.AndroidInstanceNewParams{
 })
 ```
 
-```java Java
-// Java provisions the instance; drive Playwright from playwright-java
-// or another CDP client against status.sandbox.playwrightAndroid.url.
-AndroidInstance instance = client.androidInstances().create(
-    AndroidInstanceCreateParams.builder()
-        .wait(true)
-        .reuseIfExists(true)
-        .metadata(AndroidInstanceCreateParams.Metadata.builder()
-            .labels(AndroidInstanceCreateParams.Metadata.Labels.builder()
-                .putAdditionalProperty("name", "playwright")
-                .build())
-            .build())
-        .spec(AndroidInstanceCreateParams.Spec.builder()
-            .sandbox(AndroidInstanceCreateParams.Spec.Sandbox.builder()
-                .playwrightAndroid(
-                    AndroidInstanceCreateParams.Spec.Sandbox.PlaywrightAndroid.builder()
-                        .enabled(true)
-                        .build())
-                .build())
-            .build())
-        .build()
-);
-```
 </CodeGroup>
 
 After the instance reaches `ready`, the CDP URL is at `instance.status.sandbox.playwrightAndroid.url`.

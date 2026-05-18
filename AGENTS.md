@@ -158,32 +158,23 @@ A teammate (Ritik Sahni) pushed a `readability changes` commit (`7531ee3`) while
 
 Pending answers from Muvaf. The user is tracking these and asking him separately.
 
-### From the introduction audit
+### Resolved by Muvaf on 2026-05-17
 
-1. Is the simulator stream WebRTC, WebSocket, or both? (Intro previously claimed WebRTC; current rewrite avoids the claim.)
-2. Are iPad and Apple Watch genuinely in alpha, or simply available as model options?
-3. What asset types does the server actually accept? Current claim: `.ipa`, `.apk`, `.app.tar.gz`. SDK doesn't constrain MIME.
-4. Is the `lim_` prefix on API keys contractual or descriptive?
-5. Is Detox supported? Where would users find it? Is the `limrun-detox` skill real?
-6. Is the `lim` repo legacy / a thin wrapper, or current? Should all docs link to `typescript-sdk` instead?
-7. The Java SDK was last updated 2025-12-15 (~5 months stale vs TS at 2026-05-15). Actively maintained, or should we soft-deprecate it in the "every client" framing?
+- **(1) Streaming protocol.** WebRTC with a hardware encoder. Page text doesn't currently need to surface this; the status field names (`endpointWebSocketUrl` etc.) are about the control plane, which is genuinely WebSocket.
+- **(2) iPad / Watch status.** "We can show iPad and Watch." Dropped the alpha caveat and the "use iphone for production" warning on ios/run-simulator.mdx.
+- **(3) Asset Storage formats.** APK for Android; iOS apps must be simulator builds (a `.app` folder) zipped or tarballed. Signed device IPAs still upload but are downloadable, not installable on the cloud simulator. Updated introduction.mdx, platform/asset-storage.mdx, and the `lim ios install-app` examples on agents/cli.mdx + ios/run-simulator.mdx (was `./MyApp.ipa`, now `./MyApp.app.zip`).
+- **(5) Detox.** "We have a new detox example, you can leave the skill for now." Removed Detox name-drops from android/run-emulator.mdx and reference.mdx; no docs page references the unreleased `limrun-detox` skill.
+- **(7) Java SDK.** "Java is not needed." Dropped Java code blocks and Java mentions across reference.mdx, platform/asset-storage.mdx, platform/embed-simulator.mdx, agents/mcp.mdx, ios/build-with-xcode.mdx, ios/run-simulator.mdx, ios/in-app-purchases.mdx, android/run-emulator.mdx, testing/playwright.mdx.
+- **(9) CocoaPods/SPM.** "We automatically detect and resolve it." Added a one-sentence note to ios/build-with-xcode.mdx's "What gets synced" section: the remote sandbox detects `Podfile` / `Package.swift` / `Cartfile` and resolves deps remotely, which is why `Pods/` and `.swiftpm/` don't ship.
 
-### From the quickstart audit
+### Still open
 
-8. The API-keys screenshot at `images/console/13-api-keys.png` shows the user's real "Manicule" org and real key IDs. Ship as-is, or sanitize for shipped docs?
-
-### From the agents/cli audit + expert-level review
-
-9. **CocoaPods/SwiftPM dependency handling.** The CLI has zero CocoaPods awareness. Projects with `Pods/` gitignored will fail the build on first run. Confirmed in source — no `pod install` hook, no `--pre-build`, no force-include directory pattern. Questions for Muvaf:
-   - Is the remote sandbox preinstalled with CocoaPods?
-   - Is auto-`pod install` on the roadmap?
-   - What do current customers using CocoaPods actually do (Replit, Conductor, Block all build iOS apps; one of these patterns is canonical and isn't documented)?
-   - Is there an undocumented force-include flag for sync?
-   - Any SwiftPM gotchas worth documenting?
-   - This is the single highest-impact open question; do not document a CocoaPods workaround until Muvaf answers, because we don't want to ship a hack that contradicts what the team tells real customers.
-10. **iOS system permission dialogs** (location, notifications, photos, camera) overlay the app on first launch and block flow. Does Limrun's sim image pre-accept these, or does the agent always need to dismiss them?
-11. **`--region eu-north1`** — previously surfaced in the agents/cli flag table; I genericized to `--region us-west` since the SDK examples use `us-west` and I couldn't verify `eu-north1`. Is `eu-north1` a real region worth surfacing?
-12. **`appstore/Expo-Go-54.0.6.tar.gz`** — previously used as an example asset name. Genericized to `<asset-name>`. Is there a real public/example asset name worth keeping?
+- **(4) `lim_` API-key prefix:** contractual or descriptive? Low-priority.
+- **(6) `lim` repo vs `typescript-sdk`:** is the older `lim` repo legacy?
+- **(8) API-keys screenshot** sanitization for `images/console/13-api-keys.png`.
+- **(10) iOS system permission dialogs:** does the sim image pre-accept location / notifications / photos / camera, or does the agent always need to dismiss them?
+- **(11) `--region eu-north1`:** is it a real region? Page now uses `us-west` everywhere.
+- **(12) Example asset name** like `appstore/Expo-Go-54.0.6.tar.gz` — is there a real public asset name worth surfacing? Pages now use generic placeholders.
 
 ## Real product bugs discovered (not doc issues)
 

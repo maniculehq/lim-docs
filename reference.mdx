@@ -1,9 +1,9 @@
 ---
 title: "SDK reference"
-description: "Authentication, errors, resource lifecycles, and the resources × CRUD matrix in cURL, TypeScript, Python, Go, Java, and the `lim` CLI."
+description: "Authentication, errors, resource lifecycles, and the resources × CRUD matrix in cURL, TypeScript, Python, Go, and the `lim` CLI."
 ---
 
-This page is the language-agnostic reference for the Limrun REST API. Each operation is shown with code-group tabs for cURL, the four official SDKs (TypeScript, Python, Go, Java), and the `lim` CLI.
+This page is the language-agnostic reference for the Limrun REST API. Each operation is shown with code-group tabs for cURL, the three official SDKs (TypeScript, Python, Go), and the `lim` CLI.
 
 The OpenAPI spec is the source of truth. Stainless generates each SDK from it, so method names and parameter shapes are consistent across languages once you account for casing conventions (camelCase in TypeScript, snake_case in Python, PascalCase in Go).
 
@@ -13,7 +13,7 @@ The OpenAPI spec is the source of truth. Stainless generates each SDK from it, s
 https://api.limrun.com
 ```
 
-Override with the `LIMRUN_BASE_URL` environment variable (Java SDK) or per-client option (TypeScript / Python / Go).
+Override with a per-client option in TypeScript, Python, or Go.
 
 ## Authentication
 
@@ -50,13 +50,6 @@ import (
 )
 
 client := limrun.NewClient(option.WithAPIKey("..."))  // defaults to LIM_API_KEY env
-```
-
-```java Java
-import com.limrun.api.client.LimrunClient;
-import com.limrun.api.client.okhttp.LimrunOkHttpClient;
-
-LimrunClient client = LimrunOkHttpClient.fromEnv();   // reads LIM_API_KEY + LIMRUN_BASE_URL
 ```
 
 ```bash CLI
@@ -99,17 +92,6 @@ pip install limrun_api
 go get -u github.com/limrun-inc/go-sdk@latest
 ```
 
-```xml Java
-<!-- Maven -->
-<dependency>
-  <groupId>com.limrun.api</groupId>
-  <artifactId>limrun-java</artifactId>
-  <version>0.1.0</version>
-</dependency>
-<!-- Gradle (Kotlin DSL) -->
-<!-- implementation("com.limrun.api:limrun-java:0.1.0") -->
-```
-
 ```bash CLI
 # npm
 npm install --global @limrun/cli
@@ -124,31 +106,31 @@ bun add --global @limrun/cli
 
 ## SDK capability matrix
 
-The four SDKs are not equivalent. Every one covers the control plane (create / get / list / delete instances and assets). Beyond that, only the TypeScript SDK is complete; the others vary. The CLI is the easiest fallback for anything your SDK doesn't cover; raw HTTP is the universal escape hatch.
+The three SDKs are not equivalent. Every one covers the control plane (create / get / list / delete instances and assets). Beyond that, only the TypeScript SDK is complete; the others vary. The CLI is the easiest fallback for anything your SDK doesn't cover; raw HTTP is the universal escape hatch.
 
-| Capability | TypeScript | Python | Go | Java |
-|---|---|---|---|---|
-| Instance CRUD (iOS, Android, Xcode) | ✓ | ✓ | iOS + Android only (no `XcodeInstances` service) | iOS + Android only (no `xcodeInstances()`) |
-| Asset CRUD | ✓ | ✓ | ✓ | ✓ |
-| `assets.getOrUpload` (MD5 dedup + signed PUT) | ✓ | upload manually | ✓ (`Assets.GetOrUpload`) | upload manually |
-| iOS device control (taps, screenshot, element-tree, typeText, simctl streaming, ...) | ✓ | use REST or CLI | ✓ (subset, see below) | use REST or CLI |
-| Android device control over the SDK | ✓ | use REST + ADB | use REST + ADB | use REST + ADB |
-| ADB tunnel for Android | ✓ (`startAdbTunnel`) | use external `adb` | ✓ (`tunnel.NewADB`, plus `Multiplexed`) | use external `adb` |
-| Xcode source-sync + remote `xcodebuild` | ✓ (`xcodeInstances.createClient`) | use `lim xcode build` | use `lim xcode build` | use `lim xcode build` |
-| iOS reverse tunnel for Detox-style flows | ✓ (`startReverseTunnel`) | not supported | not supported | not supported |
-| iOS app-log / syslog streaming | ✓ | not supported | not supported | not supported |
-| iOS video recording | ✓ | not supported | not supported | not supported |
-| StoreKit local-config helpers | ✓ | not supported | not supported | not supported |
+| Capability | TypeScript | Python | Go |
+|---|---|---|---|
+| Instance CRUD (iOS, Android, Xcode) | ✓ | ✓ | iOS + Android only (no `XcodeInstances` service) |
+| Asset CRUD | ✓ | ✓ | ✓ |
+| `assets.getOrUpload` (MD5 dedup + signed PUT) | ✓ | upload manually | ✓ (`Assets.GetOrUpload`) |
+| iOS device control (taps, screenshot, element-tree, typeText, simctl streaming, ...) | ✓ | use REST or CLI | ✓ (subset, see below) |
+| Android device control over the SDK | ✓ | use REST + ADB | use REST + ADB |
+| ADB tunnel for Android | ✓ (`startAdbTunnel`) | use external `adb` | ✓ (`tunnel.NewADB`, plus `Multiplexed`) |
+| Xcode source-sync + remote `xcodebuild` | ✓ (`xcodeInstances.createClient`) | use `lim xcode build` | use `lim xcode build` |
+| iOS reverse tunnel | ✓ (`startReverseTunnel`) | not supported | not supported |
+| iOS app-log / syslog streaming | ✓ | not supported | not supported |
+| iOS video recording | ✓ | not supported | not supported |
+| StoreKit local-config helpers | ✓ | not supported | not supported |
 
 The **Go iOS WebSocket client** (`github.com/limrun-inc/go-sdk/websocket/ios`) covers screenshot, element-tree, tap, tap-element, type-text, press-key, launch-app, list-apps, open-url, install-app, lsof, set-orientation, increment/decrement/set element value, and `simctl` streaming. It does **not** include terminate-app, scroll, performActions, or video recording today.
 
-If you're on Python or Java and need any of the device-control or build surfaces, the canonical option is the `lim` CLI from `@limrun/cli` (shell out from your code) or raw REST calls against the URLs returned in `instance.status`. The CLI is feature-complete; the SDKs catch up later.
+If you're on Python and need any of the device-control or build surfaces, the canonical option is the `lim` CLI from `@limrun/cli` (shell out from your code) or raw REST calls against the URLs returned in `instance.status`. The CLI is feature-complete; the SDKs catch up later.
 
 ## Errors
 
 Errors are returned as JSON with an HTTP status code that maps to a typed error class in every SDK.
 
-| Status | TypeScript / Python / Java / Go | Meaning |
+| Status | TypeScript / Python / Go | Meaning |
 |---|---|---|
 | `400` | `BadRequestError` | Malformed input or invalid combination of parameters. |
 | `401` | `AuthenticationError` | Missing or invalid API key. |
@@ -305,27 +287,9 @@ instance, err := client.IosInstances.New(ctx, limrun.IosInstanceNewParams{
 })
 ```
 
-```java Java
-// Attach an Xcode sandbox with spec.sandbox.xcode in cURL/TypeScript/Python/Go,
-// or use `lim ios create --xcode`. The Java SDK may lag the OpenAPI spec for sandbox fields.
-IosInstance instance = client.iosInstances().create(
-    IosInstanceCreateParams.builder()
-        .wait_(true)
-        .reuseIfExists(true)
-        .metadata(IosInstanceCreateParams.Metadata.builder()
-            .labels(Map.of("session", "demo"))
-            .build())
-        .spec(IosInstanceCreateParams.Spec.builder()
-            .model(IosInstanceCreateParams.Spec.Model.IPHONE)
-            .region("eu-north1")
-            .build())
-        .build()
-);
-```
-
 ```bash CLI
 lim ios create --reuse-if-exists --xcode \
-  --model iphone --region eu-north1 \
+  --model iphone --region us-west \
   --label session=demo
 ```
 </CodeGroup>
@@ -369,16 +333,6 @@ for iter.Next() {
 }
 ```
 
-```java Java
-IosInstanceListPage page = client.iosInstances().list(
-    IosInstanceListParams.builder()
-        .labelSelector("session=demo")
-        .state("ready")
-        .build()
-);
-page.items().forEach(inst -> System.out.println(inst.metadata().id()));
-```
-
 ```bash CLI
 lim ios list --label-selector "session=demo" --state ready
 ```
@@ -407,11 +361,6 @@ inst, _ := client.IosInstances.Get(ctx, id)
 _ = client.IosInstances.Delete(ctx, id)
 ```
 
-```java Java
-IosInstance inst = client.iosInstances().get(id);
-client.iosInstances().delete(id);
-```
-
 ```bash CLI
 lim ios get <id>
 lim ios delete <id>           # or `lim ios delete` for the last-created
@@ -420,11 +369,11 @@ lim ios delete <id>           # or `lim ios delete` for the last-created
 
 ### Android instances
 
-The Android operations have the same shape as iOS. Substitute `androidInstances` (TS / Java), `android_instances` (Python), `AndroidInstances` (Go), or `lim android *` (CLI). The Android-specific pieces are `clues` accepting `{ kind: 'OSVersion', osVersion: '13'|'14'|'15' }`, the multi-asset shapes on `initialAssets`, and `spec.sandbox.playwrightAndroid.enabled`.
+The Android operations have the same shape as iOS. Substitute `androidInstances` (TS), `android_instances` (Python), `AndroidInstances` (Go), or `lim android *` (CLI). The Android-specific pieces are `clues` accepting `{ kind: 'OSVersion', osVersion: '13'|'14'|'15' }`, the multi-asset shapes on `initialAssets`, and `spec.sandbox.playwrightAndroid.enabled`.
 
 ### Xcode instances
 
-The TypeScript and Python SDKs expose a top-level `xcodeInstances` / `xcode_instances` resource with the same CRUD shape as iOS. The **Go and Java SDKs do not** ship an `XcodeInstances` service today; reach the same instances through one of these paths:
+The TypeScript and Python SDKs expose a top-level `xcodeInstances` / `xcode_instances` resource with the same CRUD shape as iOS. The **Go SDK does not** ship an `XcodeInstances` service today; reach the same instances through one of these paths:
 
 - Set `spec.sandbox.xcode.enabled: true` when creating an iOS instance and use the iOS resource on the SDK; the Xcode sandbox URL comes back at `instance.status.sandbox.xcode.url`.
 - Or call `POST /v1/xcode_instances` directly over HTTP.
@@ -432,7 +381,7 @@ The TypeScript and Python SDKs expose a top-level `xcodeInstances` / `xcode_inst
 
 ### Assets
 
-Assets use `getOrCreate` (upsert) and `getOrUpload` (upsert plus actual upload) instead of `create`. The `os` field on `Asset` is optional; leaving it unset means the asset is available for both platforms. The **`getOrUpload` helper** that handles MD5 dedup and the signed PUT ships in the TypeScript and Go SDKs; Python and Java callers do the two-step pattern manually (call `getOrCreate`, then PUT the bytes to `signedUploadUrl` if `md5` is missing or doesn't match).
+Assets use `getOrCreate` (upsert) and `getOrUpload` (upsert plus actual upload) instead of `create`. The `os` field on `Asset` is optional; leaving it unset means the asset is available for both platforms. The **`getOrUpload` helper** that handles MD5 dedup and the signed PUT ships in the TypeScript and Go SDKs; Python callers do the two-step pattern manually (call `getOrCreate`, then PUT the bytes to `signedUploadUrl` if `md5` is missing or doesn't match).
 
 <CodeGroup>
 ```bash cURL
@@ -493,17 +442,6 @@ got, _ := client.Assets.Get(ctx, id, limrun.AssetGetParams{IncludeDownloadURL: p
 _ = client.Assets.Delete(ctx, id)
 ```
 
-```java Java
-AssetGetOrCreateResponse upserted = client.assets().getOrCreate(
-    AssetGetOrCreateParams.builder().name("my-app.tar.gz").build()
-);
-List<Asset> listed  = client.assets().list(
-    AssetListParams.builder().namePrefixFilter("my-app-").includeDownloadUrl(true).build()
-);
-Asset fetched = client.assets().get(id);
-client.assets().delete(id);
-```
-
 ```bash npm CLI
 lim asset push ./my-app.tar.gz --name my-app-v1.tar.gz
 lim asset list --name my-app-v1.tar.gz --download-url
@@ -516,7 +454,7 @@ lim asset delete <id>
 
 ## Auto-pagination
 
-`list` endpoints in TypeScript / Python / Go return iterable objects. Java returns a page object you can step through manually.
+`list` endpoints in TypeScript, Python, and Go return iterable objects you can range over directly.
 
 <CodeGroup>
 ```ts TypeScript
@@ -536,14 +474,6 @@ for iter.Next() {
     fmt.Println(iter.Current().Metadata.ID)
 }
 ```
-
-```java Java
-IosInstanceListPage page = client.iosInstances().list();
-while (page.hasNextPage()) {
-    page.items().forEach(inst -> System.out.println(inst.metadata().id()));
-    page = page.getNextPage().orElseThrow();
-}
-```
 </CodeGroup>
 
 ## OpenAPI spec
@@ -552,7 +482,7 @@ The REST API is documented on [lim.run](https://lim.run) and in each SDK's gener
 
 ## Timeouts, retries, logging
 
-All four SDKs default to a 5-minute request timeout and 2 retries with exponential backoff. Configure both per-client with the `timeout` and `maxRetries` options, or override per-request.
+All three SDKs default to a 5-minute request timeout and 2 retries with exponential backoff. Configure both per-client with the `timeout` and `maxRetries` options, or override per-request.
 
 The TypeScript SDK also accepts a `logger` and `logLevel` (`'debug' | 'info' | 'warn' | 'error' | 'off'`), settable through the `LIMRUN_LOG` env var. At `'debug'` the SDK logs full HTTP requests and responses. Auth headers are redacted, but sensitive data in request and response bodies is not, so keep that in mind before turning debug logging on in production.
 

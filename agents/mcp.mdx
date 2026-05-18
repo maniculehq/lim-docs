@@ -59,22 +59,6 @@ inst, _ := client.IosInstances.New(ctx, limrun.IosInstanceNewParams{
 fmt.Println(inst.Status.McpURL)
 ```
 
-```java Java
-// The Java SDK does not yet expose mcpUrl on the typed Status model.
-// Read it from the raw additional-properties map (or use the CLI).
-IosInstance instance = client.iosInstances().create(
-    IosInstanceCreateParams.builder()
-        .wait(true)
-        .reuseIfExists(true)
-        .metadata(IosInstanceCreateParams.Metadata.builder()
-            .labels(IosInstanceCreateParams.Metadata.Labels.builder()
-                .putAdditionalProperty("name", JsonValue.from("agent-session"))
-                .build())
-            .build())
-        .build()
-);
-JsonValue mcpUrl = instance.status()._additionalProperties().get("mcpUrl");
-```
 </CodeGroup>
 
 Or from the CLI:
@@ -204,7 +188,7 @@ Three things to notice:
 - **The SDK client streams build output.** `build.stdout.on('data', ...)` collects each line as it arrives; `await build` resolves when the process exits and throws on a non-zero status. The MCP response gets the full log.
 - **The MCP transport is separate from the server registration.** The full example mounts both `/xcodebuild` (a raw HTTP endpoint) and an MCP transport on one Node HTTP server, so the same process is reachable by curl and by an MCP client. The skeleton above shows only the MCP side; see the example for the transport wiring.
 
-This pattern is Node-only as written. The TypeScript SDK is the only one that wraps the Xcode sandbox as a streaming client (`xcodeInstances.createClient` plus `xcode.xcodebuild()`). The Python, Go, and Java SDKs cover the REST CRUD surface (create / list / get / delete instances), so a Python MCP server that runs builds would shell out to `lim xcode build` from inside the tool handler.
+This pattern is Node-only as written. The TypeScript SDK is the only one that wraps the Xcode sandbox as a streaming client (`xcodeInstances.createClient` plus `xcode.xcodebuild()`). The Python and Go SDKs cover the REST CRUD surface (create / list / get / delete instances), so a Python MCP server that runs builds would shell out to `lim xcode build` from inside the tool handler.
 
 ## Next steps
 
