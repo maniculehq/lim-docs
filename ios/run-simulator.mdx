@@ -345,7 +345,7 @@ await client.softReset('com.example.MyApp', { strategy: 'full' }); // also clear
 // returns: { strategy, bundleId, itemsCleared?, durationMs }
 ```
 
-## Read app and system logs
+## Read app logs
 
 Tail the last N lines once, or stream live. The stream emits one `line` event per log line (batched ~500ms server-side), plus `error` and `close`.
 
@@ -359,10 +359,6 @@ stream.on('line', (line) => console.log(line));
 stream.on('error', console.error);
 stream.on('close', () => console.log('stream closed'));
 stream.stop();   // unsubscribe when done
-
-// System log
-const sys = client.streamSyslog();
-sys.on('line', (line) => console.log(line));
 ```
 
 Or from the CLI:
@@ -370,7 +366,6 @@ Or from the CLI:
 ```bash
 lim ios app-log com.example.MyApp --tail 200
 lim ios app-log com.example.MyApp --follow
-lim ios syslog
 ```
 
 ## Record a video
