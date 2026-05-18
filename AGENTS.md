@@ -195,6 +195,8 @@ These are surfaced during verification; flag them with the team separately. Don'
 
 3. **Inactivity-timeout doc was wrong.** Previous docs claimed default 3m; CLI help says "default comes from your org settings." Fixed in agents/cli.mdx.
 
+4. **`lim ios syslog` / `client.streamSyslog()` returns "Cannot run while sandboxed".** On a fresh `ios_uswb_*` instance, both the CLI command and the SDK method return `log: Cannot run while sandboxed` and stream no lines. Reproduced twice on fresh instances during ios/run-simulator.mdx verification (2026-05-17). The underlying `log` binary inside the simulator container can't run under the sandbox profile. Per-app logs via `appLogTail` / `streamAppLog` / `lim ios app-log <bundleId>` work fine, so this only affects the system-wide path. Ask Muvaf: is this image-side, on the roadmap, or should we drop both from docs? Page currently still documents both unchanged.
+
 ## Expert-level gotchas not yet covered on `agents/cli`
 
 These are gaps the current docs don't address. They're real, agent-hitting failures, but most need the client's input before documenting. The user is going to ask Muvaf the consolidated question list before we write workarounds.
