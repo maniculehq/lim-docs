@@ -19,12 +19,12 @@ const instance = await lim.iosInstances.create({
   },
   spec: {
     model: 'iphone',                    // 'iphone' | 'ipad' | 'watch'
-    region: 'eu-north1',
+    region: 'us-west',
     inactivityTimeout: '10m',           // '1m' | '10m' | '3h' | ...
     hardTimeout: '0',                   // '0' = no hard cap
     clues: [{ kind: 'ClientIP', clientIp: '203.0.113.42' }],
     initialAssets: [
-      { kind: 'App', source: 'AssetName', assetName: 'appstore/Expo-Go-54.0.6.tar.gz', launchMode: 'ForegroundIfRunning' },
+      { kind: 'App', source: 'AssetName', assetName: 'my-app-build.zip', launchMode: 'ForegroundIfRunning' },
     ],
     sandbox: { xcode: { enabled: true } },
   },
@@ -38,7 +38,7 @@ instance = client.ios_instances.create(
     metadata={"labels": {"app": "my-app", "session": "demo"}},
     spec={
         "model": "iphone",                # "iphone" | "ipad" | "watch"
-        "region": "eu-north1",
+        "region": "us-west",
         "inactivity_timeout": "10m",
         "hard_timeout": "0",
         "clues": [{"kind": "ClientIP", "client_ip": "203.0.113.42"}],
@@ -46,7 +46,7 @@ instance = client.ios_instances.create(
             {
                 "kind": "App",
                 "source": "AssetName",
-                "asset_name": "appstore/Expo-Go-54.0.6.tar.gz",
+                "asset_name": "my-app-build.zip",
                 "launch_mode": "ForegroundIfRunning",
             },
         ],
@@ -65,7 +65,7 @@ instance, err := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
         Labels: map[string]string{"app": "my-app", "session": "demo"},
     },
     Spec: limrun.IosInstanceNewParamsSpec{
-        Region:            limrun.String("eu-north1"),
+        Region:            limrun.String("us-west"),
         InactivityTimeout: limrun.String("10m"),
         HardTimeout:       limrun.String("0"),
         Sandbox: limrun.IosInstanceNewParamsSpecSandbox{
@@ -99,7 +99,7 @@ IosInstance instance = client.iosInstances().create(
                 .build())
             .build())
         .spec(IosInstanceCreateParams.Spec.builder()
-            .region("eu-north1")
+            .region("us-west")
             .inactivityTimeout("10m")
             .hardTimeout("0")
             .build())
@@ -110,10 +110,10 @@ IosInstance instance = client.iosInstances().create(
 ```bash CLI
 lim ios create --reuse-if-exists \
   --model iphone \
-  --region eu-north1 \
+  --region us-west \
   --inactivity-timeout 10m \
   --label app=my-app --label session=demo \
-  --install-asset appstore/Expo-Go-54.0.6.tar.gz \
+  --install-asset my-app-build.zip \
   --xcode
 ```
 </CodeGroup>
@@ -123,8 +123,8 @@ lim ios create --reuse-if-exists \
 | Field | Type | Meaning |
 |---|---|---|
 | `model` | `'iphone' \| 'ipad' \| 'watch'` | Apple Simulator model. Defaults to `iphone`. `ipad` and `watch` are currently in alpha (the console picker labels them as such); use `iphone` for production workloads. |
-| `region` | string | Pin region (e.g. `eu-north1`). Otherwise scheduled by clues + availability. |
-| `inactivityTimeout` | duration string | `1m`, `10m`, `3h`. Default `3m`. `0` uses your org's default. |
+| `region` | string | Pin region (e.g. `us-west`). Otherwise scheduled by clues + availability. |
+| `inactivityTimeout` | duration string | `1m`, `10m`, `3h`. Default comes from your org settings. Passing `0` is equivalent to omitting it. |
 | `hardTimeout` | duration string | Forced termination. Default `0` = no hard cap. |
 | `clues` | array | Scheduling hints. `{ kind: 'ClientIP', clientIp }` picks a region close to the end user. |
 | `initialAssets` | array | Apps to install at boot. See [Asset Storage](/platform/asset-storage). |
@@ -314,7 +314,7 @@ await client.setElementValue('42', { AXLabel: 'Count' });   // faster than typin
 await client.typeText('hello world');                   // types into focused field
 await client.typeText('email@example.com', true);       // pressEnter = true
 await client.pressKey('enter');
-await client.pressKey('a', ['shift']);                   // modifiers: shift, ctrl, alt, meta
+await client.pressKey('a', ['shift']);                   // modifiers: shift, command, control, alt
 await client.toggleKeyboard();                           // equivalent to ⌘K in Simulator
 ```
 
