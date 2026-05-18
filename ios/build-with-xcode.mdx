@@ -328,7 +328,7 @@ lim xcode build . \
   --upload my-app-pr-42.ipa
 ```
 
-The build result includes a signed download URL when you've configured an upload. Store it in your PR comment or pipeline output. Anyone with the URL can download the IPA without a Limrun API key. The signature is short-lived, so hand it off promptly.
+The build result includes a signed download URL when you've configured an upload. Store it in your PR comment or pipeline output. Anyone with the URL can download the IPA without a Limrun API key. The signature expires after 15 minutes; if you need it later, re-fetch a fresh URL with `lim asset list --name <asset> --download-url`.
 
 ## Upload the build artifact
 
