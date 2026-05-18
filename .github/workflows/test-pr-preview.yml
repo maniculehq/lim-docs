@@ -1,0 +1,79 @@
+name: Verify PR preview workflow
+
+# Throwaway workflow used to verify the documented pr-previews flow end-to-end
+# against limrun-inc/sample-native-app, since this repo doesn't carry iOS source.
+# Delete the branch once verification is done.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sample app
+        uses: actions/checkout@v4
+        with:
+          repository: limrun-inc/sample-native-app
+          path: sample
+
+      - name: Install Limrun CLI
+        run: npm install --global @limrun/cli
+
+      - name: Build on Limrun
+        working-directory: sample
+        env:
+          LIM_API_KEY: ${{ secrets.LIM_API_KEY }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          ASSET_NAME="${REPO}-pr-${PR}.zip"
+          echo "ASSET_NAME=${ASSET_NAME}" >> "$GITHUB_ENV"
+
+          lim xcode create --reuse-if-exists \
+            --label pr=${PR} \
+            --label repo=${REPO}
+
+          lim xcode build . \
+            --scheme sample-native-app \
+            --upload "${ASSET_NAME}"
+
+      - name: Comment with preview link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const assetName = process.env.ASSET_NAME;
+            const url = `https://console.limrun.com/preview?asset=${encodeURIComponent(assetName)}&platform=ios`;
+            const body = [
+              '📱 **iOS preview ready** (verification run)',
+              '',
+              `Preview: ${url}`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Cleanup
+        if: always()
+        env:
+          LIM_API_KEY: ${{ secrets.LIM_API_KEY }}
+          PR: ${{ github.event.number }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          lim xcode list --label-selector "pr=${PR},repo=${REPO}" --json \
+            | jq -r '.[].metadata.id' \
+            | xargs -r -n1 lim xcode delete || true
+
+          ASSET_NAME="${REPO}-pr-${PR}.zip"
+          ASSET_ID=$(lim asset list --name "${ASSET_NAME}" --json | jq -r '.[0].id // empty')
+          if [ -n "$ASSET_ID" ]; then
+            lim asset delete "$ASSET_ID"
+          fi
