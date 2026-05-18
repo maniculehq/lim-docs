@@ -3,11 +3,519 @@ title: "Run an iOS Simulator"
 description: "Drive a running iOS simulator from code or shell: taps, typing, screenshots, recordings, app lifecycle, logs, and reverse tunnels."
 ---
 
-Once your instance is created and `ready`, this page covers everything you can do to it. For provisioning, see the [Quickstart](/quickstart). For builds, see [Build with remote Xcode](/ios/build-with-xcode).
+Your iOS instance is `ready`. From here you can read the screen, drive the UI with taps and typing, install and launch apps, capture screenshots and video, stream logs, and tunnel local services into the simulator. The same primitives compose into server-side batches that an agent uses to run a multi-step flow in a single round-trip.
+
+For provisioning, see the [Quickstart](/quickstart); for builds, see [Build with remote Xcode](/ios/build-with-xcode). To pick a different model, region, or pre-installed app, jump to [Configure the instance](#configure-the-instance) near the bottom of the page.
+
+## Connect to your instance
+
+Open a WebSocket client to drive the instance.
+
+- **TypeScript** covers the full device-control surface (every method on this page).
+- **Go** covers most of the same methods. See the [SDK capability matrix](/reference#sdk-capability-matrix) for the exact list.
+- **Python** and **Java** only ship the control plane (create, list, delete instances). For taps, screenshots, and other device actions in those languages, drive the device through the CLI or raw REST.
+
+<CodeGroup>
+```ts TypeScript
+import { Ios } from '@limrun/api';
+
+const client = await Ios.createInstanceClient({
+  apiUrl: instance.status.apiUrl!,
+  token: instance.status.token,
+  logLevel: 'info',         // 'none' | 'error' | 'warn' | 'info' | 'debug'
+});
+
+console.log('UDID:', client.deviceInfo.udid);
+console.log('Screen:', client.deviceInfo.screenWidth, client.deviceInfo.screenHeight);
+```
+
+```go Go
+import (
+    "context"
+    limrun "github.com/limrun-inc/go-sdk"
+    "github.com/limrun-inc/go-sdk/option"
+    iosws "github.com/limrun-inc/go-sdk/websocket/ios"
+)
+
+lim := limrun.NewClient(option.WithAPIKey(os.Getenv("LIM_API_KEY")))
+inst, _ := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
+    Wait:          limrun.Bool(true),
+    ReuseIfExists: limrun.Bool(true),
+})
+
+client, err := iosws.NewClient(inst.Status.APIURL, inst.Status.Token)
+if err != nil { panic(err) }
+defer client.Close()
+```
+
+</CodeGroup>
+
+Or from the CLI:
+
+```bash
+# The CLI maintains its own connection per command. No explicit client step.
+# Persistent sessions reduce per-command latency:
+lim session start
+```
+
+The TypeScript and Go clients initialize differently:
+
+- **TypeScript**: `Ios.createInstanceClient(...)` returns once the WebSocket is open and `client.deviceInfo` is populated.
+- **Go**: `iosws.NewClient(...)` returns immediately; the first device call blocks until the WebSocket opens.
+
+### Where the URLs come from
+
+The instance status carries everything you need:
+
+| Status field | Use |
+|---|---|
+| `apiUrl` | HTTP base for the device daemon. Pass to the control client. |
+| `token` | Per-instance bearer for `apiUrl`, `endpointWebSocketUrl`, and `sandbox.xcode.url`. Embedded in `signedStreamUrl`. |
+| `endpointWebSocketUrl` | WebSocket endpoint for the [`<RemoteControl />` web component](/platform/embed-simulator) (pass with `?token=`). |
+| `signedStreamUrl` | Console-hosted watch URL with the token embedded; open in a browser without your API key. |
+| `mcpUrl` | Per-instance MCP HTTP endpoint. Auth with your org API key, not `status.token`. See [MCP](/agents/mcp). |
+| `sandbox.xcode.url` | Xcode sandbox API URL (only when `spec.sandbox.xcode.enabled: true`). |
+| `targetHttpPortUrlPrefix` | Reverse-proxy prefix for tunneled HTTP ports on the device. |
+| `state` | `unknown` → `creating` → `assigned` → `ready` → `terminated`. |
+
+## Read the screen
+
+Before any action, read what's actually on the screen. The element tree is the source of truth for what's interactable; the screenshot is the fastest visual sanity check.
+
+<CodeGroup>
+```ts TypeScript
+const tree = await client.elementTree();
+// tree: ElementTreeNode[] (recursive accessibility hierarchy)
+// fields per node: AXLabel, AXUniqueId, AXValue, role, type, title, traits, frame, children
+
+const shot = await client.screenshot();
+// { base64: string, width: number, height: number }
+```
+
+```go Go
+treeJSON, err := client.ElementTree(ctx, nil)   // raw JSON; parse with encoding/json
+shot, err := client.Screenshot(ctx)             // shot.Base64, shot.Width, shot.Height
+```
+
+</CodeGroup>
+
+Or from the CLI:
+
+```bash
+lim ios element-tree
+lim ios element-tree --json | jq '.[] | select(.AXLabel == "Continue")'
+lim ios screenshot ./out.png
+```
+
+Screenshot dimensions are in *points*, the same coordinate space as `tap(x, y)`. If you want to tap based on a coordinate in a screenshot's pixel space (e.g. when the screenshot was scaled), use `tapWithScreenSize`:
+
+```ts
+await client.tapWithScreenSize(x, y, screenshotWidth, screenshotHeight);
+```
+
+## Tap
+
+Prefer accessibility selectors. They survive layout changes; coordinates don't.
+
+<CodeGroup>
+```ts TypeScript
+// By accessibility identifier (most stable)
+await client.tapElement({ AXUniqueId: 'startButton' });
+
+// By label
+await client.tapElement({ AXLabel: 'Save' });
+
+// By label contains (case-insensitive)
+await client.tapElement({ AXLabelContains: 'continue' });
+
+// By type + label
+await client.tapElement({ type: 'Button', AXLabel: 'Done' });
+
+// By coordinates (last resort)
+await client.tap(201, 450);
+```
+
+```go Go
+// Selector field names differ slightly from TypeScript:
+//   AccessibilityID, Label, LabelContains, ElementType, Title, TitleContains, Value
+_, err := client.TapElement(ctx, iosws.AccessibilitySelector{
+    AccessibilityID: "startButton",
+})
+_, err = client.TapElement(ctx, iosws.AccessibilitySelector{
+    Label: "Save",
+})
+_, err = client.TapElement(ctx, iosws.AccessibilitySelector{
+    ElementType: "Button",
+    Label:       "Done",
+})
+err = client.Tap(ctx, 201, 450)
+```
+
+</CodeGroup>
+
+Or from the CLI:
+
+```bash
+lim ios tap-element --ax-unique-id startButton
+lim ios tap-element --ax-label "Save"
+lim ios tap-element --ax-label-contains continue
+lim ios tap-element --type Button --ax-label "Done"
+lim ios tap 201 450
+```
+
+`AccessibilitySelector` accepts `AXUniqueId`, `AXLabel`, `AXLabelContains`, `type`, `title`, `titleContains`, and `AXValue` (TypeScript field names; Go uses `AccessibilityID`, `Label`, `LabelContains`, `ElementType`, `Title`, `TitleContains`, and `Value` for the same fields). All non-empty fields must match (AND, not OR).
+
+### Steppers, sliders, and text values
+
+For controls that aren't tapped but adjusted, use the element-targeted variants:
+
+```ts
+await client.incrementElement({ AXLabel: 'Volume' });
+await client.decrementElement({ AXLabel: 'Volume' });
+await client.setElementValue('42', { AXLabel: 'Count' });   // faster than typing char-by-char
+```
+
+## Type and press keys
+
+Type into the currently focused field, press individual keys with optional modifiers, or toggle the on-screen keyboard. `toggleKeyboard` is the equivalent of pressing ⌘K in the simulator.
+
+<CodeGroup>
+```ts TypeScript
+await client.typeText('hello world');                   // types into focused field
+await client.typeText('email@example.com', true);       // pressEnter = true
+await client.pressKey('enter');
+await client.pressKey('a', ['shift']);                   // modifiers: shift, command, control, alt
+await client.toggleKeyboard();
+```
+
+```go Go
+err := client.TypeText(ctx, "hello world", false)
+err = client.TypeText(ctx, "email@example.com", true) // pressEnter
+err = client.PressKey(ctx, "enter")
+err = client.PressKey(ctx, "a", "shift")
+// toggleKeyboard is TypeScript-only today.
+```
+
+</CodeGroup>
+
+Or from the CLI:
+
+```bash
+lim ios type "hello world" --enter
+lim ios press-key enter --modifier shift
+lim ios toggle-keyboard
+```
+
+## Scroll and orientation
+
+`scroll` is a finger-swipe gesture. `pixels` is the gesture distance in points; `coordinate` (TS only) defaults to the screen center; `momentum` (0.0-1.0) controls fling decay. `setOrientation` flips the device between portrait and landscape.
+
+```ts
+await client.scroll('down', 300);
+await client.scroll('up',   300, { coordinate: [200, 400], momentum: 0.4 });
+
+await client.setOrientation('Portrait');
+await client.setOrientation('Landscape');
+```
+
+Or from the CLI:
+
+```bash
+lim ios scroll down --amount 300
+```
+
+## Open URLs and deep links
+
+`openUrl` works for both web URLs and registered deep-link schemes.
+
+```ts
+await client.openUrl('https://apple.com');               // opens in Safari
+await client.openUrl('myapp://orders/42');               // deep link into your app
+```
+
+Or from the CLI:
+
+```bash
+lim ios open-url "myapp://orders/42"
+```
+
+## Run a batch of actions
+
+When a sequence shouldn't have a round-trip between each step, use `performActions`. The server runs the whole batch inside the pod, stops on the first failure, and reports per-action results. This is the pattern agents reach for once they're driving anything more than a single tap.
+
+```ts
+const result = await client.performActions(
+  [
+    { type: 'tapElement', selector: { AXLabel: 'Continue' } },
+    { type: 'wait', durationMs: 500 },
+    { type: 'typeText', text: 'hello', pressEnter: true },
+    { type: 'scroll', direction: 'down', pixels: 300 },
+    { type: 'pressKey', key: 'enter' },
+  ],
+  { timeoutMs: 10_000 },
+);
+// result.results is per-action
+```
+
+Or from the CLI:
+
+```bash
+lim ios perform \
+  --action 'type=tapElement,selector={"AXLabel":"Continue"}' \
+  --action type=wait,durationMs=500 \
+  --action "type=typeText,text=hello,pressEnter=true"
+```
+
+Action `type` values:
+
+- **High-level (one-to-one with the single-action methods):** `tap`, `tapElement`, `incrementElement`, `decrementElement`, `setElementValue`, `typeText`, `pressKey`, `scroll`, `toggleKeyboard`, `openUrl`, `setOrientation`, `wait`.
+- **Raw HID (for custom gestures):** `touchDown`, `touchMove`, `touchUp`, `keyDown`, `keyUp`, `buttonDown`, `buttonUp`.
+
+Hardware `button` values: `home`, `lock`, `side`, `applePay`, `softwareKeyboard`.
+
+### Multi-touch and custom gestures
+
+The raw HID primitives let you build gestures with precise timing. Pair `touchDown` + `touchMove` + `touchUp` with `wait` actions to simulate long-presses, flings with custom inertia, or anything the higher-level `scroll` doesn't cover:
+
+```ts
+const cx = client.deviceInfo.screenWidth / 2;
+const startY = 600;
+const endY = 200;
+
+await client.performActions([
+  { type: 'touchDown', x: cx, y: startY },
+  { type: 'wait', durationMs: 30 },
+  { type: 'touchMove', x: cx, y: startY - 100 },
+  { type: 'touchMove', x: cx, y: startY - 200 },
+  { type: 'touchMove', x: cx, y: endY },
+  { type: 'touchUp',   x: cx, y: endY },
+]);
+```
+
+## Install, launch, and terminate apps
+
+Install from a URL or local file, launch by bundle ID, terminate when you're done. `listApps` enumerates what's already on the device, system apps included.
+
+<CodeGroup>
+```ts TypeScript
+const apps = await client.listApps();
+// [{ bundleId, name, installType }, ...]
+
+await client.launchApp('com.example.MyApp');
+await client.launchApp('com.example.MyApp', 'RelaunchIfRunning');
+await client.terminateApp('com.example.MyApp');
+
+// Install from a URL (md5 enables server-side caching)
+await client.installApp('https://...build.zip', {
+  md5: '...',
+  timeoutMs: 120_000,
+  launchMode: 'ForegroundIfRunning',
+});
+```
+
+```go Go
+apps, err := client.ListApps(ctx)
+// []InstalledApp{ BundleID, Name, InstallType }
+
+err = client.LaunchApp(ctx, "com.example.MyApp")
+result, err := client.InstallApp(ctx, "https://...build.zip", &iosws.AppInstallationOptions{
+    MD5:        "...",
+    LaunchMode: "ForegroundIfRunning",
+})
+// terminate-app is TypeScript-only today; fall back to `lim ios terminate-app` or REST.
+```
+
+</CodeGroup>
+
+Or from the CLI:
+
+```bash
+lim ios list-apps
+lim ios launch-app com.example.MyApp --mode RelaunchIfRunning
+lim ios terminate-app com.example.MyApp
+lim ios install-app ./MyApp.ipa
+lim ios install-app https://... --md5 abc... --launch-mode ForegroundIfRunning
+```
+
+### Reset app data between runs
+
+Between test cases or scenario reruns, wipe the app's data container and relaunch it. Faster than uninstalling and reinstalling.
+
+```ts
+await client.softReset('com.example.MyApp');                       // strategy: 'data' (default)
+await client.softReset('com.example.MyApp', { strategy: 'full' }); // also clears caches, keychain, and privacy grants
+// returns: { strategy, bundleId, itemsCleared?, durationMs }
+```
+
+## Read app and system logs
+
+Tail the last N lines once, or stream live. The stream emits one `line` event per log line (batched ~500ms server-side), plus `error` and `close`.
+
+```ts
+// One-shot tail
+const tail = await client.appLogTail('com.example.MyApp', 200);
+
+// Stream live
+const stream = client.streamAppLog('com.example.MyApp');
+stream.on('line', (line) => console.log(line));
+stream.on('error', console.error);
+stream.on('close', () => console.log('stream closed'));
+stream.stop();   // unsubscribe when done
+
+// System log
+const sys = client.streamSyslog();
+sys.on('line', (line) => console.log(line));
+```
+
+Or from the CLI:
+
+```bash
+lim ios app-log com.example.MyApp --tail 200
+lim ios app-log com.example.MyApp --follow
+lim ios syslog
+```
+
+## Record a video
+
+Recordings run server-side. `quality` accepts the integers `5` through `10`; the server default is `5`. Save to a local file, hand the bytes to a presigned URL, or both.
+
+```ts
+await client.startRecording({ quality: 5 });
+// ... drive the UI ...
+const downloadUrl = await client.stopRecording({ localPath: '/tmp/demo.mp4' });
+// or:
+await client.stopRecording({ presignedUrl: '<your-s3-upload-url>' });
+```
+
+Or from the CLI:
+
+```bash
+lim ios record start --quality 5
+# ... drive the UI ...
+lim ios record stop -o /tmp/demo.mp4
+# or upload directly:
+lim ios record stop --presigned-url "<url>"
+```
+
+## Reverse-tunnel a local service
+
+Expose a TCP service on your machine to the simulator. Use it for anything the app inside the simulator needs to call into: a mock backend, a debug proxy, a test runner.
+
+```ts
+const tunnel = await client.startReverseTunnel({
+  remotePort: 57090,           // must be in 57090..57099
+  localPort: 4000,             // defaults to remotePort
+  localHost: '127.0.0.1',
+});
+// The simulator can now reach this service at 127.0.0.1:57090
+// tunnel.close() to tear it down
+```
+
+Or from the CLI:
+
+```bash
+lim ios reverse 57090:4000             # expose local :4000 as simulator :57090
+lim ios reverse 57091 --local-host 0.0.0.0
+```
+
+The remote port must be in **57090-57099**. That range is reserved for tunneled services.
+
+## Drop into macOS dev tools
+
+When the high-level API doesn't cover what you need, the instance exposes a small set of macOS dev tools as escape hatches.
+
+<CodeGroup>
+```ts TypeScript
+// Streaming simctl
+const exec = client.simctl(['listapps', 'booted']);
+exec.on('line-stdout', (line) => console.log(line));
+exec.on('line-stderr', (line) => console.error(line));
+const { code } = await exec.wait();
+
+// One-shot xcrun (limited to --sdk / --show-* flags)
+const { stdout } = await client.xcrun(['--sdk', 'iphonesimulator', '--show-sdk-version']);
+
+// xcodebuild version only
+await client.xcodebuild(['-version']);
+
+// Upload a file to the simulator sandbox (returns the in-sandbox path)
+const remotePath = await client.cp('config.json', '/local/path/to/config.json');
+
+// Inspect open UNIX sockets
+const sockets = await client.lsof();
+```
+
+```go Go
+// simctl mirrors os/exec.Cmd; pipe to your own writers or buffer the output.
+cmd := client.Simctl(ctx, "listapps", "booted")
+cmd.Stdout = os.Stdout
+cmd.Stderr = os.Stderr
+if err := cmd.Run(); err != nil { panic(err) }
+
+// Inspect open UNIX sockets
+sockets, err := client.Lsof(ctx)
+
+// xcrun, xcodebuild, and cp are TypeScript-only today.
+```
+
+</CodeGroup>
+
+Or from the CLI:
+
+```bash
+lim ios simctl -- listapps booted
+lim ios xcrun  -- --sdk iphonesimulator --show-sdk-version
+lim ios cp config.json /local/path/to/config.json
+lim ios lsof
+```
+
+## Reuse and clean up instances
+
+Each iOS instance is single-tenant. Only one client should drive it at a time, so scope instances per user, per PR, or per session with labels. `reuseIfExists` returns the same instance on the next call with the same labels, which keeps a long-running agent on one warm pod instead of churning through fresh ones.
+
+```ts
+// Reuse the same instance for the same session across multiple agent runs
+const instance = await lim.iosInstances.create({
+  wait: true,
+  reuseIfExists: true,
+  metadata: { labels: { session: sessionId, user: userId } },
+});
+```
+
+Tear down explicitly when you're done:
+
+```ts
+await lim.iosInstances.delete(instance.metadata.id);
+```
+
+```bash
+lim ios delete <id>    # or `lim ios delete` for the last-created
+```
+
+Or clean up by label selector:
+
+```ts
+const stale = await lim.iosInstances.list({ labelSelector: `user=${userId}`, state: 'ready' });
+for await (const inst of stale) {
+  await lim.iosInstances.delete(inst.metadata.id);
+}
+```
+
+The console's **Instances** tab shows the same data in a UI. Filter by state, filter by label selector, sort by duration or created-at, and re-attach to any ready instance with one click:
+
+<Frame>
+  <img src="/images/console/10-instances.png" alt="Console Instances page showing one ready iOS instance with its ID, status, duration, and creation time" />
+</Frame>
+
+After a `delete` (or after the inactivity timeout fires), the row disappears from the **Ready** filter. Switching the filter to **All** shows the same instance in `terminated` state until it ages out:
+
+<Frame>
+  <img src="/images/console/14-instances-empty.png" alt="Console Instances page after deleting the ready instance, with no rows under the Ready filter" />
+</Frame>
 
 ## Configure the instance
 
-The shape of an iOS instance is set at creation time on `spec`:
+By default, instances are an iPhone in a nearby region with a server-applied inactivity timeout. To pick a different model, pin a region, pre-install an app, or attach an Xcode build sandbox, pass `spec.*` at create time:
 
 <CodeGroup>
 ```ts TypeScript
@@ -107,7 +615,11 @@ IosInstance instance = client.iosInstances().create(
 );
 ```
 
-```bash CLI
+</CodeGroup>
+
+Or from the CLI:
+
+```bash
 lim ios create --reuse-if-exists \
   --model iphone \
   --region us-west \
@@ -116,7 +628,6 @@ lim ios create --reuse-if-exists \
   --install-asset my-app-build.zip \
   --xcode
 ```
-</CodeGroup>
 
 ### `spec` reference
 
@@ -136,453 +647,9 @@ lim ios create --reuse-if-exists \
   <img src="/images/console/03-ios-models.png" alt="Console Playground iOS model picker showing iPhone (stable), iPad (alpha), and Apple Watch (alpha)" />
 </Frame>
 
-## Connect to the instance
+<Accordion title="Manage the WebSocket connection">
 
-Once the instance is `ready`, open a WebSocket client to drive it.
-
-- **TypeScript** covers the full device-control surface (every method on this page).
-- **Go** covers most of the same methods. See the [SDK capability matrix](/reference#sdk-capability-matrix) for the exact list.
-- **Python** and **Java** only ship the control plane (create, list, delete instances). For taps, screenshots, and other device actions in those languages, drive the device through the CLI or raw REST.
-
-<CodeGroup>
-```ts TypeScript
-import { Ios } from '@limrun/api';
-
-const client = await Ios.createInstanceClient({
-  apiUrl: instance.status.apiUrl!,
-  token: instance.status.token,
-  logLevel: 'info',         // 'none' | 'error' | 'warn' | 'info' | 'debug'
-});
-
-console.log('UDID:', client.deviceInfo.udid);
-console.log('Screen:', client.deviceInfo.screenWidth, client.deviceInfo.screenHeight);
-```
-
-```go Go
-import (
-    "context"
-    limrun "github.com/limrun-inc/go-sdk"
-    "github.com/limrun-inc/go-sdk/option"
-    iosws "github.com/limrun-inc/go-sdk/websocket/ios"
-)
-
-lim := limrun.NewClient(option.WithAPIKey(os.Getenv("LIM_API_KEY")))
-inst, _ := lim.IosInstances.New(ctx, limrun.IosInstanceNewParams{
-    Wait:          limrun.Bool(true),
-    ReuseIfExists: limrun.Bool(true),
-})
-
-client, err := iosws.NewClient(inst.Status.APIURL, inst.Status.Token)
-if err != nil { panic(err) }
-defer client.Close()
-```
-
-```bash CLI
-# The CLI maintains its own connection per command. No explicit client step.
-# Persistent sessions reduce per-command latency:
-lim session start
-```
-</CodeGroup>
-
-The TypeScript and Go clients initialize differently:
-
-- **TypeScript**: `await createInstanceClient(...)` returns only after the WebSocket is open. As soon as it returns, `client.deviceInfo` has `udid`, `screenWidth`, `screenHeight`, and `model` ready to read.
-- **Go**: `iosws.NewClient(...)` returns the client immediately. The first device call blocks until the WebSocket is open.
-
-### Where the URLs come from
-
-`instance.status` exposes everything you need:
-
-| Status field | Use |
-|---|---|
-| `apiUrl` | HTTP base for the device daemon. Pass to the control client. |
-| `token` | Per-instance bearer for `apiUrl`, `endpointWebSocketUrl`, and `sandbox.xcode.url`. Embedded in `signedStreamUrl`. |
-| `endpointWebSocketUrl` | WebSocket endpoint for `<RemoteControl />` (pass with `?token=`). |
-| `signedStreamUrl` | Console-hosted watch URL with the token embedded; open in a browser without your API key. |
-| `mcpUrl` | Per-instance MCP HTTP endpoint. Auth with your org API key, not `status.token`. See [MCP](/agents/mcp). |
-| `sandbox.xcode.url` | Xcode sandbox API URL (only when `spec.sandbox.xcode.enabled: true`). |
-| `targetHttpPortUrlPrefix` | Reverse-proxy prefix for tunneled HTTP ports on the device. |
-| `state` | `unknown` → `creating` → `assigned` → `ready` → `terminated`. |
-
-## Read the screen
-
-The element tree is the source of truth for what's on the screen and what can be interacted with. Read it before every action.
-
-<CodeGroup>
-```ts TypeScript
-const tree = await client.elementTree();
-// tree: ElementTreeNode[] (recursive accessibility hierarchy)
-// fields per node: AXLabel, AXUniqueId, AXValue, role, type, title, traits, frame, children
-```
-
-```go Go
-// Returns raw JSON; parse with encoding/json or feed it to your own AST.
-treeJSON, err := client.ElementTree(ctx, nil)
-```
-
-```bash CLI
-lim ios element-tree
-lim ios element-tree --json | jq '.[] | select(.AXLabel == "Continue")'
-```
-</CodeGroup>
-
-For a visual check:
-
-<CodeGroup>
-```ts TypeScript
-const shot = await client.screenshot();
-// { base64: string, width: number, height: number }
-```
-
-```go Go
-shot, err := client.Screenshot(ctx)
-// shot.Base64, shot.Width, shot.Height
-```
-
-```bash CLI
-lim ios screenshot ./out.png
-```
-</CodeGroup>
-
-Screenshot dimensions are in *points*, the same coordinate space as `tap(x, y)`. If you want to tap based on a coordinate in a screenshot's pixel space (e.g. when the screenshot was scaled), use `tapWithScreenSize`:
-
-```ts
-await client.tapWithScreenSize(x, y, screenshotWidth, screenshotHeight);
-```
-
-## Tap
-
-Prefer accessibility selectors. They survive layout changes; coordinates don't.
-
-<CodeGroup>
-```ts TypeScript
-// By accessibility identifier (most stable)
-await client.tapElement({ AXUniqueId: 'startButton' });
-
-// By label
-await client.tapElement({ AXLabel: 'Save' });
-
-// By label contains (case-insensitive)
-await client.tapElement({ AXLabelContains: 'continue' });
-
-// By type + label
-await client.tapElement({ type: 'Button', AXLabel: 'Done' });
-
-// By coordinates (last resort)
-await client.tap(201, 450);
-```
-
-```go Go
-// Selector field names differ slightly from TypeScript:
-//   AccessibilityID, Label, LabelContains, ElementType, Title, TitleContains, Value
-_, err := client.TapElement(ctx, iosws.AccessibilitySelector{
-    AccessibilityID: "startButton",
-})
-_, err = client.TapElement(ctx, iosws.AccessibilitySelector{
-    Label: "Save",
-})
-_, err = client.TapElement(ctx, iosws.AccessibilitySelector{
-    ElementType: "Button",
-    Label:       "Done",
-})
-err = client.Tap(ctx, 201, 450)
-```
-
-```bash CLI
-lim ios tap-element --ax-unique-id startButton
-lim ios tap-element --ax-label "Save"
-lim ios tap-element --ax-label-contains continue
-lim ios tap-element --type Button --ax-label "Done"
-lim ios tap 201 450
-```
-</CodeGroup>
-
-`AccessibilitySelector` accepts `AXUniqueId`, `AXLabel`, `AXLabelContains`, `type`, `title`, `titleContains`, and `AXValue` (TypeScript field names; Go uses `AccessibilityID`, `Label`, `LabelContains`, `ElementType`, `Title`, `TitleContains`, and `Value` for the same fields). All non-empty fields must match (AND, not OR).
-
-### Steppers, sliders, and text values
-
-```ts
-await client.incrementElement({ AXLabel: 'Volume' });
-await client.decrementElement({ AXLabel: 'Volume' });
-await client.setElementValue('42', { AXLabel: 'Count' });   // faster than typing char-by-char
-```
-
-## Type text and press keys
-
-<CodeGroup>
-```ts TypeScript
-await client.typeText('hello world');                   // types into focused field
-await client.typeText('email@example.com', true);       // pressEnter = true
-await client.pressKey('enter');
-await client.pressKey('a', ['shift']);                   // modifiers: shift, command, control, alt
-await client.toggleKeyboard();                           // equivalent to ⌘K in Simulator
-```
-
-```go Go
-err := client.TypeText(ctx, "hello world", false)
-err = client.TypeText(ctx, "email@example.com", true) // pressEnter
-err = client.PressKey(ctx, "enter")
-err = client.PressKey(ctx, "a", "shift")
-// toggleKeyboard is TypeScript-only today.
-```
-
-```bash CLI
-lim ios type "hello world" --enter
-lim ios press-key enter --modifier shift
-lim ios toggle-keyboard
-```
-</CodeGroup>
-
-## Scroll
-
-```ts
-await client.scroll('down', 300);
-await client.scroll('up',   300, { coordinate: [200, 400], momentum: 0.4 });
-```
-
-`pixels` is the scroll distance in points. `coordinate` defaults to the screen center. `momentum` (0.0-1.0) controls fling decay.
-
-CLI:
-
-```bash
-lim ios scroll down --amount 300
-```
-
-## Open URLs and deep links
-
-```ts
-await client.openUrl('https://apple.com');               // opens in Safari
-await client.openUrl('myapp://orders/42');               // deep link into your app
-```
-
-```bash
-lim ios open-url "myapp://orders/42"
-```
-
-## Set the orientation
-
-```ts
-await client.setOrientation('Portrait');
-await client.setOrientation('Landscape');
-```
-
-## Install, launch, and terminate apps
-
-<CodeGroup>
-```ts TypeScript
-const apps = await client.listApps();
-// [{ bundleId, name, installType }, ...]
-
-await client.launchApp('com.example.MyApp');
-await client.launchApp('com.example.MyApp', 'RelaunchIfRunning');
-await client.terminateApp('com.example.MyApp');
-
-// Install from a URL (md5 enables server-side caching)
-await client.installApp('https://...build.zip', {
-  md5: '...',
-  timeoutMs: 120_000,
-  launchMode: 'ForegroundIfRunning',
-});
-```
-
-```go Go
-apps, err := client.ListApps(ctx)
-// []InstalledApp{ BundleID, Name, InstallType }
-
-err = client.LaunchApp(ctx, "com.example.MyApp")
-result, err := client.InstallApp(ctx, "https://...build.zip", &iosws.AppInstallationOptions{
-    MD5:        "...",
-    LaunchMode: "ForegroundIfRunning",
-})
-// terminate-app is TypeScript-only today; fall back to `lim ios terminate-app` or REST.
-```
-
-```bash CLI
-lim ios list-apps
-lim ios launch-app com.example.MyApp --mode RelaunchIfRunning
-lim ios terminate-app com.example.MyApp
-lim ios install-app ./MyApp.ipa
-lim ios install-app https://... --md5 abc... --launch-mode ForegroundIfRunning
-```
-</CodeGroup>
-
-### Reset app data
-
-Wipe the app's data container and relaunch it. Useful between test cases without reinstalling.
-
-```ts
-await client.softReset('com.example.MyApp');                       // strategy: 'data' (default)
-await client.softReset('com.example.MyApp', { strategy: 'full' }); // also clears caches
-// returns: { strategy, bundleId, itemsCleared?, durationMs }
-```
-
-## Read app and system logs
-
-```ts
-// Tail last N lines (one-shot)
-const tail = await client.appLogTail('com.example.MyApp', 200);
-
-// Stream. Emits batched 'lines' events every ~500ms
-const stream = client.streamAppLog('com.example.MyApp');
-stream.on('line', (line) => console.log(line));
-stream.on('error', console.error);
-stream.on('close', () => console.log('stream closed'));
-// later:
-stream.stop();
-
-// System log
-const sys = client.streamSyslog();
-sys.on('line', (line) => console.log(line));
-```
-
-CLI:
-
-```bash
-lim ios app-log com.example.MyApp --tail 200
-lim ios app-log com.example.MyApp --follow
-lim ios syslog
-```
-
-## Run several actions in one shot
-
-When a sequence shouldn't have a round-trip between each step, use `performActions`. The server runs the whole batch and stops on the first failure, reporting per-action results.
-
-```ts
-const result = await client.performActions(
-  [
-    { type: 'tapElement', selector: { AXLabel: 'Continue' } },
-    { type: 'wait', durationMs: 500 },
-    { type: 'typeText', text: 'hello', pressEnter: true },
-    { type: 'scroll', direction: 'down', pixels: 300 },
-    { type: 'pressKey', key: 'enter' },
-  ],
-  { timeoutMs: 10_000 },
-);
-// result.results is per-action
-```
-
-CLI:
-
-```bash
-lim ios perform \
-  --action 'type=tapElement,selector={"AXLabel":"Continue"}' \
-  --action type=wait,durationMs=500 \
-  --action "type=typeText,text=hello,pressEnter=true"
-```
-
-Action `type` values: `tap`, `tapElement`, `incrementElement`, `decrementElement`, `setElementValue`, `typeText`, `pressKey`, `scroll`, `toggleKeyboard`, `openUrl`, `setOrientation`, `wait`, `touchDown`, `touchMove`, `touchUp`, `keyDown`, `keyUp`, `buttonDown`, `buttonUp`. Hardware `button` values: `home`, `lock`, `side`, `applePay`, `softwareKeyboard`.
-
-## Multi-touch and custom gestures
-
-For multi-touch input or precise gesture timing, use the `touchDown`, `touchMove`, and `touchUp` actions inside a `performActions` batch:
-
-```ts
-const cx = client.deviceInfo.screenWidth / 2;
-const startY = 600;
-const endY = 200;
-
-await client.performActions([
-  { type: 'touchDown', x: cx, y: startY },
-  { type: 'wait', durationMs: 30 },
-  { type: 'touchMove', x: cx, y: startY - 100 },
-  { type: 'touchMove', x: cx, y: startY - 200 },
-  { type: 'touchMove', x: cx, y: endY },
-  { type: 'touchUp',   x: cx, y: endY },
-]);
-```
-
-## Record a video
-
-Recordings run server-side. `quality` is `5` (default) through `10`.
-
-```ts
-await client.startRecording({ quality: 5 });
-// ... drive the UI ...
-const downloadUrl = await client.stopRecording({ localPath: '/tmp/demo.mp4' });
-// or:
-await client.stopRecording({ presignedUrl: '<your-s3-upload-url>' });
-```
-
-CLI:
-
-```bash
-lim ios record start --quality 5
-# ... drive the UI ...
-lim ios record stop -o /tmp/demo.mp4
-# or upload directly:
-lim ios record stop --presigned-url "<url>"
-```
-
-## Drop into macOS dev tools
-
-The instance exposes a small set of macOS dev tools for when the high-level API doesn't cover what you need.
-
-<CodeGroup>
-```ts TypeScript
-// Streaming simctl
-const exec = client.simctl(['listapps', 'booted']);
-exec.on('line-stdout', (line) => console.log(line));
-exec.on('line-stderr', (line) => console.error(line));
-const { code } = await exec.wait();
-
-// One-shot xcrun (limited to --sdk / --show-* flags)
-const { stdout } = await client.xcrun(['--sdk', 'iphonesimulator', '--show-sdk-version']);
-
-// xcodebuild version only
-await client.xcodebuild(['-version']);
-
-// Upload a file to the simulator sandbox (returns the in-sandbox path)
-const remotePath = await client.cp('config.json', '/local/path/to/config.json');
-
-// Inspect open UNIX sockets
-const sockets = await client.lsof();
-```
-
-```go Go
-// simctl mirrors os/exec.Cmd; pipe to your own writers or buffer the output.
-cmd := client.Simctl(ctx, "listapps", "booted")
-cmd.Stdout = os.Stdout
-cmd.Stderr = os.Stderr
-if err := cmd.Run(); err != nil { panic(err) }
-
-// Inspect open UNIX sockets
-sockets, err := client.Lsof(ctx)
-
-// xcrun, xcodebuild, and cp are TypeScript-only today.
-```
-
-```bash CLI
-lim ios simctl -- listapps booted
-lim ios xcrun  -- --sdk iphonesimulator --show-sdk-version
-lim ios cp config.json /local/path/to/config.json
-lim ios lsof
-```
-</CodeGroup>
-
-## Reverse-tunnel a local service
-
-Expose a local service to the simulator. Local tools like Detox use this to reach the app inside the simulator.
-
-```ts
-const tunnel = await client.startReverseTunnel({
-  remotePort: 57090,           // must be in 57090..57099
-  localPort: 4000,             // defaults to remotePort
-  localHost: '127.0.0.1',
-});
-// The simulator can now reach this service at 127.0.0.1:57090
-// tunnel.close() to tear it down
-```
-
-CLI:
-
-```bash
-lim ios reverse 57090:4000             # expose local :4000 as simulator :57090
-lim ios reverse 57091 --local-host 0.0.0.0
-```
-
-The remote port must be in **57090-57099**. The runtime reserves the range for app-side reachable services.
-
-## Manage the connection
+The TypeScript client exposes lifecycle hooks for long-running drivers and connection debugging:
 
 ```ts
 client.getConnectionState();
@@ -598,49 +665,7 @@ client.disconnect();  // close cleanly, do not auto-reconnect
 
 The SDK auto-reconnects on transient failures with exponential backoff (defaults: 6 attempts, 1 s base, 30 s cap). `disconnect()` is final; no further auto-reconnects after it.
 
-## Reuse and clean up instances
-
-Each iOS instance is single-tenant. Only one client should drive it at a time. Use labels to scope instances per user, per PR, or per session. `reuseIfExists` returns the same instance on the next call with the same labels.
-
-```ts
-// Reuse the same instance for the same session across multiple agent runs
-const instance = await lim.iosInstances.create({
-  wait: true,
-  reuseIfExists: true,
-  metadata: { labels: { session: sessionId, user: userId } },
-});
-```
-
-Tear down explicitly:
-
-```ts
-await lim.iosInstances.delete(instance.metadata.id);
-```
-
-```bash
-lim ios delete <id>    # or `lim ios delete` for the last-created
-```
-
-Or clean up by label selector:
-
-```ts
-const stale = await lim.iosInstances.list({ labelSelector: `user=${userId}`, state: 'ready' });
-for await (const inst of stale) {
-  await lim.iosInstances.delete(inst.metadata.id);
-}
-```
-
-The console's **Instances** tab shows the same data in a UI. Filter by state, filter by label selector, sort by duration or created-at, and re-attach to any ready instance with one click:
-
-<Frame>
-  <img src="/images/console/10-instances.png" alt="Console Instances page showing one ready iOS instance with its ID, status, duration, and creation time" />
-</Frame>
-
-After a `delete` (or after the inactivity timeout fires), the row disappears from the **Ready** filter. Switching the filter to **All** shows the same instance in `terminated` state until it ages out:
-
-<Frame>
-  <img src="/images/console/14-instances-empty.png" alt="Console Instances page after deleting the ready instance, with no rows under the Ready filter" />
-</Frame>
+</Accordion>
 
 ## Next steps
 
