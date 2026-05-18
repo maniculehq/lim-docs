@@ -55,6 +55,104 @@ Things like "build logs stream to stdout" are the default behavior of any CLI bu
 
 Inline flag in the page **and** a one-liner in `QUESTIONS-FOR-CLIENT.md` at this repo root (if it doesn't exist, create it). Nothing ships unflagged. The plan file at `~/.claude/plans/well-the-whole-point-recursive-aho.md` has the running list of open questions.
 
+## Review process
+
+Reviewing a docs page is two passes: **technical verification first, writing review second**. The order matters. Editing prose on unverified facts polishes wrong claims into more confident wrong claims, which is the failure mode that broke Muvaf's trust the first time. Verify before you stylize.
+
+### Pass 1 — Technical verification
+
+Goal: every factual claim on the page traces to source, transcript, or hands-on observation.
+
+1. **Pull the source files you'll need.** For most pages, the relevant ones live in `/tmp/lim-typescript-sdk`:
+   - `src/resources/{ios,android,xcode}-instances.ts` — spec / status shape, model and region enums
+   - `packages/cli/src/commands/**/*.ts` — every CLI command and flag
+   - `src/ios-client.ts`, `src/resources/xcode-instances-helpers.ts` — SDK method shapes
+   - `src/folder-sync.ts` + `src/folder-sync-ignore.ts` — sync rules
+   - `src/exec-client.ts` — build streaming over SSE
+   - `packages/cli/src/lib/{auth,config}.ts` — login callback, `.env` auto-load
+
+2. **Walk the page paragraph by paragraph.** For every sentence that asserts something the system does (a default, a flag name, a sync rule, a status field, a region, an error format, an auto-detected behavior), do one of:
+   - **Cite** the source file + line that proves it.
+   - **Verify** hands-on per [How to verify a CLI claim hands-on](#how-to-verify-a-cli-claim-hands-on).
+   - **Flag** it as unverified and either remove the sentence or surface the question under [Open questions](#open-questions-for-the-client).
+
+3. **Specific things to double-check:**
+   - **Defaults.** Does the page state a default value? Find where it's set in source. SDK type docstrings sometimes contradict the CLI's `--help` output; trust empirical observation over both. (See product bug #3: the inactivity-timeout default was wrong precisely because of this.)
+   - **Flag enums.** `--region us-west`, `--model iphone`, `--sdk iphoneos`. Cross-check the `options:` array in the CLI's flag definition.
+   - **Status field names.** `apiUrl`, `endpointWebSocketUrl`, `mcpUrl`, `signedStreamUrl`, `targetHttpPortUrlPrefix`. Check the resource's `Status` interface.
+   - **SDK method names.** `client.elementTree`, `client.performActions`, `xcode.xcodebuild`, etc. Check the `InstanceClient` and `XcodeClient` type declarations.
+   - **Internal-behavior claims.** Anything starting with "the server …" or "Limrun does X internally" must be traceable to Muvaf's transcript, a Slack answer, or a verifiable source file. Otherwise cut or flag.
+   - **Performance / latency claims.** "Fast", "instant", "under a second" all need a real measurement or they don't ship.
+
+4. **Cross-page links.** Run a grep for internal links and confirm targets exist:
+   ```bash
+   grep -oE '\(/[^)]+\)' page.mdx | sort -u
+   ```
+
+5. **Output of Pass 1:** a citation per claim, a flag list for anything unverified, and a short list of questions for Muvaf if any.
+
+### Pass 2 — Writing review
+
+Run after verification is clean. Now you're polishing prose on facts you trust.
+
+**Structure**
+- Page opens with what the reader is here to achieve. Frontmatter description handles the meta pitch; the body jumps into action. Cut any sentence that's about the page itself ("this page covers …") rather than about the topic.
+- Each H2 / H3 earns its place. If a section is three lines of code with no narrative, fold it into a neighbor or drop the heading entirely.
+- Concepts are introduced before they're referenced. No forward references unless they're explicit links to a later section.
+- The canonical agent loop (provision → build → drive → ship → cleanup) is surfaced early on agent-facing pages.
+- Reader's understanding builds naturally as they read. Avoid "basic → intermediate → advanced" sectioning that breaks the flow; let later sections add depth to earlier concepts.
+
+**Voice and tone**
+- **No em dashes anywhere.** Periods, commas, colons, or parentheses. Search: `grep '—\|–' page.mdx`.
+- **No fluff phrases.** Search: `grep -niE 'powerful|comprehensive|leverage|enables you to|allows you to|seamless|robust|effortless|simply|easily|by the end of this guide' page.mdx`.
+- **No vague performance words** without a number: `fast`, `instant`, `quick`, `slow`, `optimized`, `lightweight`. Replace with the measurement or cut the sentence.
+- **Active voice, specific subjects.** "The CLI syncs the source" beats "The source is synced."
+- **Smart-colleague tone.** Conversational but polished. Connect ideas; show *why* the system works the way it does. Avoid both textbook-stiff and Tweet-thread-choppy.
+- **No customer / product name-drops** where they aren't load-bearing. See [Rule 3](#rule-3--no-customer--product-name-drops).
+
+**Code snippets — never dump, always frame**
+- Every block has a one-sentence introduction explaining the problem it solves.
+- After non-trivial snippets, a short follow-up explains the key parts (which params matter, what the return value carries, what comes next).
+- Large examples are broken into smaller chunks, each chunk explained.
+- CLI and SDK are **never mixed inside one `<CodeGroup>`**. The pattern is: SDK languages in one `<CodeGroup>`, then "Or from the CLI:", then the CLI block. See [Rule 4](#rule-4--cli-and-sdk-are-different-personas-never-mix).
+- Examples are runnable as-is modulo `<placeholder>` substitution. No truncated `// …` blocks that hide the meaningful part.
+
+**Tables earn their place**
+- A table encodes a real shape — field × meaning, language × support, status field × use. If it's a bulleted list in disguise, use a bulleted list.
+- Headers are short and concrete. Cells are one short phrase, not multi-sentence prose that breaks the visual rhythm.
+- SDK-coverage tables list only the SDKs we currently ship (TypeScript / Python / Go). Java is out of scope per Muvaf 2026-05-17.
+
+**Internal-detail discipline**
+- Don't explain the server's internals unless Muvaf has described them. The canonical failure mode was an invented *"the server decodes them into a temporary keychain"* claim that was simply false.
+- Observable behavior is fair game (a flag default, a sync rule, a status field). Unobservable internals (server-side caching, compression algorithms, internal data structures) need a source or they don't ship.
+
+**Anti-patterns to specifically grep for**
+- Shallow "Advanced Usage" / "Best Practices" sections with trivial content. Cut or merge into the main flow.
+- Sections that exist for symmetry rather than for an outcome.
+- "This page covers" / "In this guide" / "By the end of this…". Meta-narration belongs in frontmatter, not in the body lede.
+- Tables longer than 10 rows that try to be reference docs inside a tutorial.
+- `<CodeGroup>` blocks with only one language inside (just use the bare code fence).
+- A `description` in the frontmatter that duplicates the body's first paragraph. On Mintlify it's hidden; on the lim-run-docs framework it renders as a subtitle, so duplicates show up twice.
+
+### Final checklist
+
+Before committing:
+
+- [ ] Every factual claim traces to source, transcript, or hands-on observation.
+- [ ] Every unverified claim is removed or flagged in [Open questions](#open-questions-for-the-client).
+- [ ] No em dashes (`grep '—\|–' page.mdx` returns nothing).
+- [ ] No fluff phrases (`grep -niE 'powerful|comprehensive|leverage|enables you to|allows you to|seamless|robust|easily' page.mdx` returns nothing).
+- [ ] No vague performance words without measurements.
+- [ ] Every code block has an introduction and a follow-up where it matters.
+- [ ] CLI and SDK live in separate blocks. No mixed CodeGroups.
+- [ ] Page lede states the reader's outcome, not the page's scope.
+- [ ] Every H2 / H3 earns its place.
+- [ ] No forward references unless they're links.
+- [ ] Tables encode real shape, not filler.
+- [ ] Cross-page links resolve. Verify with `grep -oE '\(/[^)]+\)' page.mdx`.
+- [ ] Frontmatter title + description match the page's actual content.
+- [ ] `mint dev` hot-reloads without errors.
+
 ## Product context (from May 8 call with Muvaf)
 
 ### What Limrun is
