@@ -269,6 +269,8 @@ instance = client.ios_instances.create(
 ```
 
 ```go Go
+// The Go SDK does not expose `model` on the create params yet.
+// Instances default to iPhone. To pick iPad or Apple Watch, use the CLI or REST.
 instance, err := client.IosInstances.New(ctx, limrun.IosInstanceNewParams{
     Wait:          param.NewOpt(true),
     ReuseIfExists: param.NewOpt(true),
@@ -276,7 +278,6 @@ instance, err := client.IosInstances.New(ctx, limrun.IosInstanceNewParams{
         Labels: map[string]string{"session": "demo"},
     },
     Spec: limrun.IosInstanceNewParamsSpec{
-        Model:  limrun.IosInstanceNewParamsSpecModelIphone,
         Region: param.NewOpt("eu-north1"),
         Sandbox: limrun.IosInstanceNewParamsSpecSandbox{
             Xcode: limrun.IosInstanceNewParamsSpecSandboxXcode{
