@@ -134,6 +134,84 @@ Run after verification is clean. Now you're polishing prose on facts you trust.
 - `<CodeGroup>` blocks with only one language inside (just use the bare code fence).
 - A `description` in the frontmatter that duplicates the body's first paragraph. On Mintlify it's hidden; on the lim-run-docs framework it renders as a subtitle, so duplicates show up twice.
 
+### Concrete examples — patterns we keep catching
+
+The rules above are abstract. These are the specific patterns that keep landing in drafts and need rework. If your draft matches the **bad** column, rewrite to look like the **good** column.
+
+**Pattern 1: Intros orient on outcome, not internals.**
+
+❌ *"Limrun's Xcode sandbox is a Mac you call over HTTPS. The flow: 1. Sync. 2. Run xcodebuild. 3. Stream logs."* Reader can't tell whether this page is for them.
+
+✅ *"Limrun lets you compile iOS apps on a remote Mac. Your laptop or CI runner doesn't need to be one. After a successful build, you either run the app on a remote simulator or download a signed IPA to ship."* First sentence is the outcome, second is who it's for, third is what you get afterwards.
+
+**Pattern 2: "Things to know upfront" bullets describe what the reader does, not how the system works.**
+
+Even outcome-led intros fail when followed by bullets about internals.
+
+❌ Bullets like *"The Xcode sandbox is a real Mac. Source syncs as a delta. Two shapes: standalone or paired."* — facts about the system; reader doesn't care yet.
+
+✅ Bullets like *"Provision a sandbox. Sync your source. Run xcodebuild. Install or ship."* — action verbs the reader takes. Often the right answer is no bullets at all; just a 3-sentence outcome paragraph.
+
+**Pattern 3: Show full commands, never name-drop SDK options in prose.**
+
+❌ *"Pass them via `additionalFiles` on the SDK or `--additional-file local=remote` on the CLI."* Reader has to decode the identifiers.
+
+✅ Lead-in sentence + an SDK code block + an "On the CLI:" + a CLI code block. The code shows the call; prose explains the outcome. This is the cure for almost every "too much SDK in prose" reviewer comment.
+
+**Pattern 4: Code samples take a 1-sentence lead-in, not multi-bullet breakdowns.**
+
+❌ Code block followed by *"What the TypeScript example does, line by line: `wait: true` blocks until ready; `reuseIfExists: true` plus a stable label returns the same instance; `spec.sandbox.xcode.enabled: true` is the paired-shape flag; `createClient` opens an authenticated handle..."* Re-enumerates every option from the code. Eyes glaze.
+
+✅ Code block followed by *"After this, `xcode` is the handle you use in the sync and build sections below."* One sentence; tells the reader what they have and where to go next.
+
+If a per-option breakdown genuinely earns its place, use a reference table or named subsections (`### Tune the delta sync` with bold-led entries) — not a wall of bullets immediately under the code.
+
+**Pattern 5: Cut implementation/mechanism descriptions.**
+
+The reader cares what they get, not how the system gets there.
+
+❌ *"The call blocks until both the simulator and the paired sandbox are ready, and returns the same instance on re-runs as long as you keep the label stable. The Xcode sandbox URL comes back on the response and authenticates with the same access token as the simulator. From there, you open a client to the sandbox and use it for the sync and build steps below."* Three sentences of internals.
+
+✅ *"After this, `xcode` is the handle you use in the sync and build sections below."*
+
+Other patterns to cut on sight: "the SDK base64-encodes them before sending", "the call returns immediately with a process-like object", "(case-sensitive)", "because Xcode needs them on the remote", "computes xdelta3 patches against the cache for those that have".
+
+**Pattern 6: When source seems to disagree with prior docs, grep multiple files before "fixing".**
+
+Real incident: a previous pass removed a hardcoded skip-list from `ios/build-with-xcode.mdx` after checking `folder-sync-ignore.ts` and concluding the SDK only hardcodes `.git`, `.DS_Store`, basis cache, and `.gitignore`. The truth: a second file (`xcode-instances-helpers.ts:189-217`) layers iOS-specific ignores (`build/`, `DerivedData/`, `Pods/`, `xcuserdata/`, `.dSYM/`...) on top via the `additional` callback. The "fix" was wrong and had to be reverted.
+
+When source seems to contradict docs:
+1. Grep across `typescript-sdk/src/**` for the relevant identifier or behavior.
+2. Check whether multiple files contribute (often the case for sync, auth, and tunnel logic).
+3. Run the SDK call hands-on and inspect the actual result.
+4. Only then conclude the docs are wrong.
+
+**Pattern 7: Don't leak the review process into the docs.**
+
+❌ *"Five tools. Verified against a live instance."* The trailing fragment is a review note.
+
+✅ *"Five tools."*
+
+Verification provenance belongs in commit messages, not the page.
+
+**Pattern 8: Specific verified numbers beat hedges. Hedges beat made-up numbers.**
+
+- Verified hands-on (e.g., `X-Amz-Expires=900` on the actual URL) → *"expires after 15 minutes"*.
+- Can't verify → *"short-lived"* or *"expires after a short window"*, plus a question for Muvaf.
+- Never write a specific number you guessed at.
+
+**Pattern 9: Reference pages can name SDK methods; tutorial pages should hide them behind code.**
+
+`ios/run-simulator.mdx` is a reference — readers come to look up `client.tapElement(...)`. It's expected to name SDK methods directly in prose, tables, and explanations.
+
+`ios/build-with-xcode.mdx` and `agents/mcp.mdx` are walking the reader through a flow. SDK identifier names live in code blocks; prose explains outcomes. The reader sees the call, not its name.
+
+Quick test: does the page teach a flow (tutorial) or list capabilities (reference)? Tutorial = code-first, prose explains outcome. Reference = tables and prose, dense with identifiers.
+
+**Pattern 10: One page push-ready at a time.**
+
+Finish a page to commit-and-push quality before opening the next file. Don't read ahead; don't batch reviews. The user reviews each page live and gives per-page feedback; batching loses that signal.
+
 ### Final checklist
 
 Before committing:
